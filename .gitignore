@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+.pytest_cache/
+.mypy_cache/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+.next/
+out/
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Local databases / volumes
+postgres_data/
+keycloak_data/
+
+# Ollama / local model files
+*.gguf
+*.bin
+models/
+
+# Temporary
+tmp/
+temp/
+
+# OS
+.DS_Store
+Thumbs.db
