@@ -259,6 +259,19 @@ class TestApiV1(unittest.TestCase):
         status, data = http_get("/api/v1/candidate-blocks")
         self.assertEqual(status, 401)
 
+    def test_24_optimization_runs_list_authenticated(self):
+        """24. GET /api/v1/optimization/runs returns historical runs."""
+        self.assertIsNotNone(self.token)
+        status, data = http_get("/api/v1/optimization/runs?page=1&page_size=5", token=self.token)
+        self.assertEqual(status, 200)
+        self.assertIn("items", data)
+        self.assertIn("total", data)
+
+    def test_25_optimization_runs_unauthenticated_401(self):
+        """25. GET /api/v1/optimization/runs without token returns 401."""
+        status, data = http_get("/api/v1/optimization/runs")
+        self.assertEqual(status, 401)
+
 
 if __name__ == "__main__":
     unittest.main()

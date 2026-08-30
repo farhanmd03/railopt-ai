@@ -227,6 +227,7 @@ class OptimizationService:
                     explanation_dict = {
                         "optimized_block_id": b.optimized_block_id,
                         "candidate_id": b.candidate_id,
+                        "candidate_priority_value": b.priority_value,
                         "window_id": b.window_id,
                         "freight_impact": b.freight_impact,
                         "resource_status": b.resource_status,
