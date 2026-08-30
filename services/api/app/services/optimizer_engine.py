@@ -325,6 +325,7 @@ class CPSATSolver:
                         freight_impact=c.freight_level,
                         resource_status=c.resource_check,
                         priority_value=c.priority_score,
+                        compatibility_value=c.compatibility_score,
                         reasons=c.reasons,
                     )
                     scheduled_blocks.append(opt_block)

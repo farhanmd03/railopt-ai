@@ -45,6 +45,7 @@ class OptimizedBlockDomain:
     freight_impact: str | None = None
     resource_status: str = "UNVERIFIED"
     priority_value: float = 0.0
+    compatibility_value: float = 100.0
     reasons: list[str] = field(default_factory=list)
 
 

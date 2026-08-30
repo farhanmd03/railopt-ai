@@ -38,6 +38,9 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
 from app.core.database import async_session_factory
 from app.domain import (
     HardConstraintConfig,
@@ -46,8 +49,10 @@ from app.domain import (
     OptimizationTask,
     SolverStatus,
 )
+from app.models.asset import MaintenanceTask
 from app.services.candidate_block_engine import CandidateBlockEngine
 from app.services.optimizer_engine import CPSATSolver
+from app.services.priority_engine import compute_priority
 
 
 def make_test_task(task_id: str, section_id: str = "SEC-01", department: str = "Engineering", priority: float = 80.0, dur: float = 2.0, overdue: int = 10) -> OptimizationTask:
@@ -315,11 +320,84 @@ class TestCPSATSolverUnit(unittest.TestCase):
         self.assertTrue(any("enforce_single_assignment_per_task=False" in w for w in result.warnings))
 
 
+    def test_02b_same_section_non_overlapping_both_selected(self):
+        """2b. Two non-overlapping candidates on the same section can both be selected."""
+        t1 = make_test_task("WO-0001", section_id="SEC-01", priority=80.0)
+        t2 = make_test_task("WO-0002", section_id="SEC-01", priority=75.0)
+
+        # Non-overlapping intervals on SEC-01 (02:00-04:00 and 05:00-07:00)
+        c1 = make_test_candidate("CAND-01", section_id="SEC-01", start_hr=2, end_hr=4, task_ids=["WO-0001"])
+        c2 = make_test_candidate("CAND-02", section_id="SEC-01", start_hr=5, end_hr=7, task_ids=["WO-0002"])
+
+        result = CPSATSolver.solve(tasks=[t1, t2], candidates=[c1, c2])
+        self.assertEqual(result.solver_status, SolverStatus.OPTIMAL)
+        self.assertEqual(len(result.scheduled_blocks), 2)
+        self.assertEqual(result.tasks_scheduled, 2)
+        self.assertEqual(result.tasks_unassigned, 0)
+
+    def test_07b_unverified_resource_pruned_under_strict_resource_policy(self):
+        """7b. Unverified resource candidates are pruned when require_resource_feasibility=True."""
+        t1 = make_test_task("WO-0001")
+        c1 = OptimizationCandidate(
+            candidate_id="CAND-UNVERIFIED",
+            section_id="SEC-01",
+            window_id="CW-01",
+            candidate_start=datetime(2026, 8, 31, 2, 0, tzinfo=timezone.utc),
+            candidate_end=datetime(2026, 8, 31, 5, 0, tzinfo=timezone.utc),
+            required_duration_hrs=3.0,
+            window_duration_hrs=3.0,
+            task_ids=["WO-0001"],
+            departments_involved=["Engineering"],
+            priority_score=80.0,
+            compatibility_score=100.0,
+            resource_check="UNVERIFIED",
+            computed_feasibility_status="FEASIBLE",
+        )
+
+        result = CPSATSolver.solve(
+            tasks=[t1],
+            candidates=[c1],
+            hard_constraints=HardConstraintConfig(require_resource_feasibility=True),
+        )
+        self.assertEqual(len(result.scheduled_blocks), 0)
+        self.assertEqual(result.tasks_unassigned, 1)
+        self.assertIn("WO-0001", result.unassigned_tasks)
+        self.assertTrue(any("resource availability is 'UNVERIFIED'" in w for w in result.warnings))
+
+    def test_08b_block_count_minimization_behavior(self):
+        """8b. Block count penalty favors consolidating multiple tasks into fewer blocks."""
+        t1 = make_test_task("WO-0001", priority=70.0)
+        t2 = make_test_task("WO-0002", priority=70.0)
+
+        # 2 separate blocks vs 1 combined block of equal priority
+        c_sep1 = make_test_candidate("CAND-SEP-01", section_id="SEC-01", start_hr=1, end_hr=3, task_ids=["WO-0001"])
+        c_sep2 = make_test_candidate("CAND-SEP-02", section_id="SEC-02", start_hr=4, end_hr=6, task_ids=["WO-0002"])
+        c_comb = make_test_candidate(
+            "CAND-COMB",
+            section_id="SEC-01",
+            start_hr=1,
+            end_hr=3,
+            task_ids=["WO-0001", "WO-0002"],
+            depts=["Engineering", "S&T"],
+            comp_score=100.0,
+        )
+
+        result = CPSATSolver.solve(
+            tasks=[t1, t2],
+            candidates=[c_sep1, c_sep2, c_comb],
+            weights=ObjectiveWeights(weight_total_block_count=2.0),
+        )
+        self.assertEqual(result.solver_status, SolverStatus.OPTIMAL)
+        self.assertEqual(len(result.scheduled_blocks), 1)
+        self.assertEqual(result.scheduled_blocks[0].candidate_id, "CAND-COMB")
+        self.assertEqual(result.tasks_scheduled, 2)
+
+
 class TestCPSATSolverRealData(unittest.IsolatedAsyncioTestCase):
     """Integration test solving optimization against real seeded database in memory."""
 
     async def test_11_solve_real_seeded_dataset_in_memory(self):
-        """11. Solve real prototype dataset candidates and tasks in-memory."""
+        """11. Solve real prototype dataset candidates and tasks in-memory with full invariant checks."""
         async with async_session_factory() as session:
             # 1. Load candidate blocks from candidate engine
             cand_responses = await CandidateBlockEngine.generate_candidates(session)
@@ -357,21 +435,45 @@ class TestCPSATSolverRealData(unittest.IsolatedAsyncioTestCase):
                 for c in cand_responses
             ]
 
-            # 2. Extract unique tasks from candidates
-            all_task_ids = set()
-            for c in domain_candidates:
-                all_task_ids.update(c.task_ids)
+            candidate_dict = {c.candidate_id: c for c in domain_candidates}
+            all_task_ids = {tid for c in domain_candidates for tid in c.task_ids}
 
-            domain_tasks = [
-                OptimizationTask(
-                    task_id=tid,
-                    section_id="HOW_SEC_001",
-                    department="Engineering",
-                    duration_hrs=2.0,
-                    priority_score=75.0,
+            # 2. Load authentic tasks from database and compute dynamic domain priority
+            stmt = select(MaintenanceTask).options(selectinload(MaintenanceTask.asset))
+            db_tasks = (await session.scalars(stmt)).all()
+            self.assertGreaterEqual(len(db_tasks), len(all_task_ids))
+
+            domain_tasks = []
+            for t in db_tasks:
+                if t.task_id not in all_task_ids:
+                    continue
+                crit = t.asset.criticality_index if t.asset else None
+                risk = t.asset.failure_risk_score if t.asset else None
+                p_res = compute_priority(
+                    task_id=t.task_id,
+                    department=t.department,
+                    severity=t.severity,
+                    days_overdue=t.days_overdue,
+                    asset_id=t.asset_id,
+                    section_id=t.section_id,
+                    criticality_index=crit,
+                    failure_risk_score=risk,
+                    baseline_priority_score=t.priority_score,
                 )
-                for tid in all_task_ids
-            ]
+                # Note: duration_hrs on OptimizationTask is informative; candidate blocks carry required_duration_hrs
+                dur = float(t.required_duration_hrs) if t.required_duration_hrs is not None else 2.0
+                domain_tasks.append(
+                    OptimizationTask(
+                        task_id=t.task_id,
+                        section_id=t.section_id or "UNKNOWN",
+                        department=t.department,
+                        duration_hrs=dur,
+                        priority_score=p_res.computed_priority_score,
+                        days_overdue=t.days_overdue,
+                        asset_id=t.asset_id,
+                        severity=t.severity,
+                    )
+                )
 
             # 3. Execute CP-SAT Solve in memory
             result = CPSATSolver.solve(
@@ -384,7 +486,7 @@ class TestCPSATSolverRealData(unittest.IsolatedAsyncioTestCase):
                 time_limit_seconds=10.0,
             )
 
-            # Assertions
+            # Assertions & Invariant Validation
             self.assertIn(result.solver_status, [SolverStatus.OPTIMAL, SolverStatus.FEASIBLE])
             self.assertGreater(result.tasks_scheduled, 0)
             self.assertGreater(len(result.scheduled_blocks), 0)
@@ -392,6 +494,181 @@ class TestCPSATSolverRealData(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.tasks_scheduled + result.tasks_unassigned, result.tasks_considered)
             self.assertIsNotNone(result.objective_value)
             self.assertLessEqual(result.solver_runtime_seconds, 10.0)
+
+            # INVARIANT 1: Task IDs belong to actual candidates
+            seen_tasks: set[str] = set()
+            for b in result.scheduled_blocks:
+                cand = candidate_dict[b.candidate_id]
+                self.assertEqual(b.section_id, cand.section_id)
+                self.assertEqual(b.task_ids, cand.task_ids)
+                self.assertEqual(b.departments_involved, cand.departments_involved)
+                self.assertFalse(cand.train_conflict, "No train conflict block should be selected under strict policy")
+
+                # INVARIANT 2: No task appears in multiple selected blocks
+                for tid in b.task_ids:
+                    self.assertNotIn(tid, seen_tasks, f"Task {tid} scheduled in multiple blocks!")
+                    seen_tasks.add(tid)
+
+            # INVARIANT 3: No two selected same-section blocks overlap temporally
+            blocks_by_sec: dict[str, list] = {}
+            for b in result.scheduled_blocks:
+                blocks_by_sec.setdefault(b.section_id, []).append(b)
+
+            for sec, blist in blocks_by_sec.items():
+                for i in range(len(blist)):
+                    for j in range(i + 1, len(blist)):
+                        b1, b2 = blist[i], blist[j]
+                        overlap = b1.start_time < b2.end_time and b1.end_time > b2.start_time
+                        self.assertFalse(overlap, f"Temporal overlap between blocks {b1.optimized_block_id} and {b2.optimized_block_id} on section {sec}!")
+
+            # INVARIANT 4: Integrated blocks contain multiple tasks / departments
+            for b in result.scheduled_blocks:
+                if b.is_integrated:
+                    self.assertTrue(len(b.task_ids) > 1 or len(b.departments_involved) > 1)
+
+    async def test_15_real_data_priority_varies(self):
+        """15. Real data optimization results exhibit meaningfully varying priority values across blocks."""
+        async with async_session_factory() as session:
+            cand_responses = await CandidateBlockEngine.generate_candidates(session)
+            domain_candidates = [
+                OptimizationCandidate(
+                    candidate_id=c.candidate_id,
+                    section_id=c.section_id,
+                    window_id=c.window_id,
+                    candidate_start=c.candidate_start,
+                    candidate_end=c.candidate_end,
+                    required_duration_hrs=c.required_duration_hrs,
+                    window_duration_hrs=c.window_duration_hrs,
+                    task_ids=c.task_ids,
+                    departments_involved=c.departments_involved,
+                    opportunity_id=c.opportunity_id,
+                    priority_score=c.priority_score,
+                    compatibility_score=c.compatibility_score,
+                    candidate_score=c.candidate_score,
+                    train_conflict=c.train_conflict,
+                    train_conflict_count=c.train_conflict_count,
+                    freight_data_available=c.freight_data_available,
+                    freight_level=c.freight_level,
+                    forecast_freight_trains=c.forecast_freight_trains,
+                    forecast_tonnage=c.forecast_tonnage,
+                    resource_check=c.resource_check,
+                    resource_ids=c.resource_ids,
+                    source_window_status=c.source_window_status,
+                    computed_feasibility_status=c.computed_feasibility_status,
+                    warnings=c.warnings,
+                    reasons=c.reasons,
+                )
+                for c in cand_responses
+            ]
+
+            stmt = select(MaintenanceTask).options(selectinload(MaintenanceTask.asset))
+            db_tasks = (await session.scalars(stmt)).all()
+
+            domain_tasks = []
+            for t in db_tasks:
+                crit = t.asset.criticality_index if t.asset else None
+                risk = t.asset.failure_risk_score if t.asset else None
+                p_res = compute_priority(
+                    task_id=t.task_id,
+                    department=t.department,
+                    severity=t.severity,
+                    days_overdue=t.days_overdue,
+                    asset_id=t.asset_id,
+                    section_id=t.section_id,
+                    criticality_index=crit,
+                    failure_risk_score=risk,
+                    baseline_priority_score=t.priority_score,
+                )
+                domain_tasks.append(
+                    OptimizationTask(
+                        task_id=t.task_id,
+                        section_id=t.section_id or "UNKNOWN",
+                        department=t.department,
+                        duration_hrs=float(t.required_duration_hrs or 2.0),
+                        priority_score=p_res.computed_priority_score,
+                        days_overdue=t.days_overdue,
+                    )
+                )
+
+            result = CPSATSolver.solve(
+                tasks=domain_tasks,
+                candidates=domain_candidates,
+                hard_constraints=HardConstraintConfig(
+                    allow_train_conflict=False,
+                    require_candidate_feasible=True,
+                ),
+            )
+            self.assertEqual(result.solver_status, SolverStatus.OPTIMAL)
+            block_priorities = [b.priority_value for b in result.scheduled_blocks]
+            self.assertGreater(len(block_priorities), 1)
+            # Assert priority values are not a trivial single constant
+            self.assertGreater(len(set(block_priorities)), 5)
+            self.assertNotEqual(min(block_priorities), max(block_priorities))
+
+    async def test_16_real_data_higher_priority_preferred_when_constrained(self):
+        """16. Higher real priority task is preferred over lower priority task on mutually exclusive window."""
+        async with async_session_factory() as session:
+            stmt = select(MaintenanceTask).options(selectinload(MaintenanceTask.asset))
+            db_tasks = (await session.scalars(stmt)).all()
+
+            # Find two tasks from the same section with different computed priorities
+            task_domain_map = {}
+            for t in db_tasks:
+                crit = t.asset.criticality_index if t.asset else None
+                risk = t.asset.failure_risk_score if t.asset else None
+                p_res = compute_priority(
+                    task_id=t.task_id,
+                    department=t.department,
+                    severity=t.severity,
+                    days_overdue=t.days_overdue,
+                    asset_id=t.asset_id,
+                    section_id=t.section_id,
+                    criticality_index=crit,
+                    failure_risk_score=risk,
+                    baseline_priority_score=t.priority_score,
+                )
+                task_domain_map[t.task_id] = OptimizationTask(
+                    task_id=t.task_id,
+                    section_id=t.section_id or "UNKNOWN",
+                    department=t.department,
+                    duration_hrs=float(t.required_duration_hrs or 2.0),
+                    priority_score=p_res.computed_priority_score,
+                    days_overdue=t.days_overdue,
+                )
+
+            # Sort tasks by priority descending
+            sorted_tasks = sorted(task_domain_map.values(), key=lambda x: x.priority_score, reverse=True)
+            high_task = sorted_tasks[0]  # highest priority
+            low_task = sorted_tasks[-1]  # lowest priority
+
+            self.assertGreater(high_task.priority_score, low_task.priority_score + 10.0)
+
+            # Create conflicting candidates in the same window
+            c_high = make_test_candidate(
+                "CAND-HIGH",
+                section_id="HOW_SEC_001",
+                start_hr=2,
+                end_hr=5,
+                task_ids=[high_task.task_id],
+                prio=high_task.priority_score,
+            )
+            c_low = make_test_candidate(
+                "CAND-LOW",
+                section_id="HOW_SEC_001",
+                start_hr=2,
+                end_hr=5,
+                task_ids=[low_task.task_id],
+                prio=low_task.priority_score,
+            )
+
+            result = CPSATSolver.solve(
+                tasks=[high_task, low_task],
+                candidates=[c_high, c_low],
+            )
+            self.assertEqual(result.solver_status, SolverStatus.OPTIMAL)
+            self.assertEqual(len(result.scheduled_blocks), 1)
+            self.assertEqual(result.scheduled_blocks[0].candidate_id, "CAND-HIGH")
+            self.assertIn(low_task.task_id, result.unassigned_tasks)
 
 
 if __name__ == "__main__":
