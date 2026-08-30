@@ -245,6 +245,20 @@ class TestApiV1(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIsInstance(data, list)
 
+    def test_22_candidate_blocks_list_authenticated(self):
+        """22. GET /api/v1/candidate-blocks returns candidate blocks."""
+        self.assertIsNotNone(self.token)
+        status, data = http_get("/api/v1/candidate-blocks?section_id=HOW_SEC_001&page_size=5", token=self.token)
+        self.assertEqual(status, 200)
+        self.assertIn("items", data)
+        self.assertIn("total", data)
+        self.assertGreater(data["total"], 0)
+
+    def test_23_candidate_blocks_unauthenticated_401(self):
+        """23. GET /api/v1/candidate-blocks without token returns 401."""
+        status, data = http_get("/api/v1/candidate-blocks")
+        self.assertEqual(status, 401)
+
 
 if __name__ == "__main__":
     unittest.main()
