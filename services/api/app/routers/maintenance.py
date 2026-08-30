@@ -6,11 +6,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import User, require_roles
 from app.schemas.common import PaginatedResponse
+from app.schemas.compatibility import (
+    IntegrationOpportunitiesListResponse,
+    IntegrationOpportunityResponse,
+)
 from app.schemas.maintenance import (
     MaintenanceTaskDetailResponse,
     MaintenanceTaskResponse,
     PriorityAssessmentResponse,
 )
+from app.services.compatibility_engine import CompatibilityEngine
 from app.services.maintenance_service import MaintenanceService
 from app.services.priority_engine import PriorityEngine
 
@@ -70,6 +75,57 @@ async def list_maintenance_tasks(
     )
 
 
+# ── STATIC SUB-PATHS PLACED BEFORE DYNAMIC /{task_id} ───────────────────────────
+
+@router.get(
+    "/integration-opportunities",
+    response_model=IntegrationOpportunitiesListResponse,
+    summary="Discover integrated-block opportunities (RBAC Protected)",
+    description=(
+        "Identify candidate combinations of 2 or 3 compatible maintenance tasks on the same section "
+        "that are candidates for potential integration into a maintenance block, subject to further "
+        "engineering and safety review. "
+        "Requires authentication and one of: ADMIN, PLANNER, ENGINEERING, SNT, TRD, CONTROL, APPROVER, VIEWER."
+    ),
+    responses={
+        401: {"description": "Missing, invalid, or expired authentication token"},
+        403: {"description": "Insufficient role privileges"},
+    },
+)
+async def list_integration_opportunities(
+    section_id: str | None = Query(None, description="Filter by section ID"),
+    department: str | None = Query(None, description="Filter by department involved (Engineering, S&T, TRD)"),
+    cross_department: bool | None = Query(None, description="Filter for cross-department opportunities only"),
+    min_priority: float | None = Query(None, description="Filter by minimum highest task priority score"),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
+    current_user: User = Depends(require_roles(*MAINTENANCE_READ_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> IntegrationOpportunitiesListResponse:
+    """List candidate integrated block opportunities with filtering and pagination."""
+    all_opps = await CompatibilityEngine.find_all_opportunities(
+        db=db,
+        section_id=section_id,
+        department=department,
+        cross_department=cross_department,
+        min_priority=min_priority,
+    )
+    total = len(all_opps)
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+    offset = (page - 1) * page_size
+    paged_items = all_opps[offset : offset + page_size]
+
+    return IntegrationOpportunitiesListResponse(
+        items=paged_items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+# ── DYNAMIC /{task_id} AND TASK-SPECIFIC SUB-PATHS ───────────────────────────────
+
 @router.get(
     "/{task_id}",
     response_model=MaintenanceTaskDetailResponse,
@@ -127,3 +183,34 @@ async def get_maintenance_task_priority(
             detail=f"Maintenance task with ID '{task_id}' not found",
         )
     return assessment
+
+
+@router.get(
+    "/{task_id}/integration-opportunities",
+    response_model=list[IntegrationOpportunityResponse],
+    summary="Get integration opportunities for a specific task (RBAC Protected)",
+    description=(
+        "Retrieve candidate integrated-block opportunities that include the specified task and "
+        "are candidates for potential integration into a maintenance block, subject to further "
+        "engineering and safety review. "
+        "Requires authentication and one of: ADMIN, PLANNER, ENGINEERING, SNT, TRD, CONTROL, APPROVER, VIEWER."
+    ),
+    responses={
+        401: {"description": "Missing, invalid, or expired authentication token"},
+        403: {"description": "Insufficient role privileges"},
+        404: {"description": "Maintenance task not found"},
+    },
+)
+async def get_task_integration_opportunities(
+    task_id: str,
+    current_user: User = Depends(require_roles(*MAINTENANCE_READ_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> list[IntegrationOpportunityResponse]:
+    """Get all integrated block opportunities involving the specified task."""
+    opps = await CompatibilityEngine.find_opportunities_for_task(db=db, task_id=task_id)
+    if opps is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Maintenance task with ID '{task_id}' not found",
+        )
+    return opps

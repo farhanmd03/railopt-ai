@@ -229,6 +229,22 @@ class TestApiV1(unittest.TestCase):
         status, data = http_get("/api/v1/maintenance-tasks/WO-0001/priority")
         self.assertEqual(status, 401)
 
+    def test_20_integration_opportunities_list_authenticated(self):
+        """20. GET /api/v1/maintenance-tasks/integration-opportunities returns opportunities list."""
+        self.assertIsNotNone(self.token)
+        status, data = http_get("/api/v1/maintenance-tasks/integration-opportunities?cross_department=true", token=self.token)
+        self.assertEqual(status, 200)
+        self.assertIn("items", data)
+        self.assertIn("total", data)
+        self.assertGreater(data["total"], 0)
+
+    def test_21_task_integration_opportunities_authenticated(self):
+        """21. GET /api/v1/maintenance-tasks/{task_id}/integration-opportunities returns task opps."""
+        self.assertIsNotNone(self.token)
+        status, data = http_get("/api/v1/maintenance-tasks/WO-0001/integration-opportunities", token=self.token)
+        self.assertEqual(status, 200)
+        self.assertIsInstance(data, list)
+
 
 if __name__ == "__main__":
     unittest.main()
