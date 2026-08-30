@@ -14,6 +14,7 @@ from app.schemas.maintenance import (
     MaintenanceTaskDetailResponse,
     MaintenanceTaskResponse,
     PriorityAssessmentResponse,
+    PriorityComponents,
 )
 from app.services.compatibility_engine import CompatibilityEngine
 from app.services.maintenance_service import MaintenanceService
@@ -182,7 +183,22 @@ async def get_maintenance_task_priority(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Maintenance task with ID '{task_id}' not found",
         )
-    return assessment
+    return PriorityAssessmentResponse(
+        task_id=assessment.task_id,
+        asset_id=assessment.asset_id,
+        section_id=assessment.section_id,
+        department=assessment.department,
+        computed_priority_score=assessment.computed_priority_score,
+        baseline_priority_score=assessment.baseline_priority_score,
+        priority_band=assessment.priority_band,
+        components=PriorityComponents(
+            severity_component=assessment.components.severity_component,
+            overdue_component=assessment.components.overdue_component,
+            criticality_component=assessment.components.criticality_component,
+            failure_risk_component=assessment.components.failure_risk_component,
+        ),
+        reasons=assessment.reasons,
+    )
 
 
 @router.get(

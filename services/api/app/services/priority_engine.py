@@ -64,8 +64,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.domain.priority import PriorityCalculationResult, PriorityComponents
 from app.models.asset import Asset, MaintenanceTask
-from app.schemas.maintenance import PriorityAssessmentResponse, PriorityComponents
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +194,7 @@ def compute_priority(
     criticality_index: float | None = None,
     failure_risk_score: float | None = None,
     baseline_priority_score: float | None = None,
-) -> PriorityAssessmentResponse:
+) -> PriorityCalculationResult:
     """Pure calculation function for maintenance priority scoring."""
     sev_comp = calculate_severity_component(severity)
     overdue_comp = calculate_overdue_component(days_overdue)
@@ -222,7 +222,7 @@ def compute_priority(
         risk_comp=risk_comp,
     )
 
-    return PriorityAssessmentResponse(
+    return PriorityCalculationResult(
         task_id=task_id,
         asset_id=asset_id,
         section_id=section_id,
@@ -247,7 +247,7 @@ class PriorityEngine:
     async def evaluate_task_priority(
         db: AsyncSession,
         task_id: str,
-    ) -> PriorityAssessmentResponse | None:
+    ) -> PriorityCalculationResult | None:
         """Fetch task and associated asset from database and compute priority assessment."""
         stmt = (
             select(MaintenanceTask)
