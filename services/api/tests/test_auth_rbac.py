@@ -38,7 +38,7 @@ from fastapi import APIRouter, Depends
 import jwt
 
 
-KEYCLOAK_URL = os.getenv("KEYCLOAK_URL", "http://127.0.0.1:8080").rstrip("/")
+KEYCLOAK_URL = os.getenv("KEYCLOAK_URL", "http://127.0.0.1:8080").replace("localhost", "127.0.0.1").rstrip("/")
 REALM = "railopt"
 CLIENT_ID = "railopt-web"
 DEMO_PASSWORD = os.getenv("DEMO_USER_PASSWORD", "railopt_demo_2026")
@@ -239,9 +239,9 @@ async def run_auth_tests():
     python_exe = sys.executable
     script_path = str(PROJECT_ROOT / "scripts" / "setup_keycloak.py")
 
-    # Test 7A: Run setup_keycloak without KC_ADMIN_PASSWORD -> must fail with code 1 and clear message
+    # Test 7A: Run setup_keycloak without KC_ADMIN_PASSWORD (explicitly empty) -> must fail
     env_missing_pwd = dict(os.environ)
-    env_missing_pwd.pop("KC_ADMIN_PASSWORD", None)
+    env_missing_pwd["KC_ADMIN_PASSWORD"] = ""
     proc_fail = subprocess.run(
         [python_exe, script_path],
         env=env_missing_pwd,

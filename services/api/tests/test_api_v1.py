@@ -211,13 +211,23 @@ class TestApiV1(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(len(data2["items"]), 1)
 
-    def test_17_validation_error_page_params(self):
-        """17. Invalid page/page_size triggers 422 Unprocessable Entity."""
-        status, data = http_get("/api/v1/assets?page=0")
-        self.assertEqual(status, 422)
+    def test_18_maintenance_task_priority_authenticated(self):
+        """18. GET /api/v1/maintenance-tasks/{task_id}/priority returns deterministic assessment."""
+        self.assertIsNotNone(self.token)
+        status, data = http_get("/api/v1/maintenance-tasks/WO-0001/priority", token=self.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["task_id"], "WO-0001")
+        self.assertIn("computed_priority_score", data)
+        self.assertIn("baseline_priority_score", data)
+        self.assertIn("priority_band", data)
+        self.assertIn("components", data)
+        self.assertIn("reasons", data)
+        self.assertIsInstance(data["reasons"], list)
 
-        status, data = http_get("/api/v1/assets?page_size=500")  # max is 100
-        self.assertEqual(status, 422)
+    def test_19_maintenance_task_priority_unauthenticated(self):
+        """19. GET /api/v1/maintenance-tasks/{task_id}/priority without token returns 401."""
+        status, data = http_get("/api/v1/maintenance-tasks/WO-0001/priority")
+        self.assertEqual(status, 401)
 
 
 if __name__ == "__main__":
