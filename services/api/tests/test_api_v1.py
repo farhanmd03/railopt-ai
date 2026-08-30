@@ -3,28 +3,56 @@
 Uses Python standard library (urllib / asyncio) against the running FastAPI app.
 """
 
-import asyncio
 import json
+import os
+from pathlib import Path
 import sys
 import unittest
 from urllib.error import HTTPError
+import urllib.parse
 import urllib.request
 
-# Ensure path
-import sys
-from pathlib import Path
 API_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = API_DIR.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(API_DIR))
 
 BASE_URL = "http://127.0.0.1:8000"
+KEYCLOAK_URL = os.getenv("KEYCLOAK_URL", "http://127.0.0.1:8080").rstrip("/")
+REALM = "railopt"
+CLIENT_ID = "railopt-web"
+DEMO_PASSWORD = os.getenv("DEMO_USER_PASSWORD", "railopt_demo_2026")
 
 
-def http_get(path: str) -> tuple[int, dict]:
+def obtain_demo_token(username: str = "engineering.demo") -> str:
+    """Acquire real JWT access token from Keycloak for demo testing."""
+    url = f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/token"
+    data = urllib.parse.urlencode({
+        "client_id": CLIENT_ID,
+        "username": username,
+        "password": DEMO_PASSWORD,
+        "grant_type": "password",
+        "scope": "openid profile email",
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        res = json.loads(resp.read().decode("utf-8"))
+        return res["access_token"]
+
+
+def http_get(path: str, token: str | None = None) -> tuple[int, dict]:
     """Helper to perform HTTP GET and parse JSON."""
     url = f"{BASE_URL}{path}"
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -36,6 +64,13 @@ def http_get(path: str) -> tuple[int, dict]:
 
 class TestApiV1(unittest.TestCase):
     """Test suite covering all required API endpoints."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.token = obtain_demo_token("engineering.demo")
+        except Exception:
+            cls.token = None
 
     def test_01_health_endpoints(self):
         """1. GET /health and /health/db still work."""
@@ -119,40 +154,50 @@ class TestApiV1(unittest.TestCase):
         status, data = http_get("/api/v1/assets/NON_EXISTENT_AST")
         self.assertEqual(status, 404)
 
-    def test_11_maintenance_tasks_list(self):
-        """11. GET /api/v1/maintenance-tasks returns tasks (total=53)."""
-        status, data = http_get("/api/v1/maintenance-tasks?page_size=100")
+    def test_11_maintenance_tasks_unauthenticated_401(self):
+        """11. GET /api/v1/maintenance-tasks without token returns 401."""
+        status, data = http_get("/api/v1/maintenance-tasks")
+        self.assertEqual(status, 401)
+        self.assertIn("detail", data)
+
+    def test_12_maintenance_tasks_list_authenticated(self):
+        """12. GET /api/v1/maintenance-tasks with valid token returns tasks (total=53)."""
+        self.assertIsNotNone(self.token, "Keycloak demo token required for this test")
+        status, data = http_get("/api/v1/maintenance-tasks?page_size=100", token=self.token)
         self.assertEqual(status, 200)
         self.assertEqual(data["total"], 53)
         self.assertEqual(len(data["items"]), 53)
 
-    def test_12_maintenance_tasks_department_filter(self):
-        """12. GET /api/v1/maintenance-tasks?department=S%26T filters properly."""
-        status, data = http_get("/api/v1/maintenance-tasks?department=S%26T")
+    def test_13_maintenance_tasks_department_filter(self):
+        """13. GET /api/v1/maintenance-tasks?department=S%26T filters properly."""
+        self.assertIsNotNone(self.token)
+        status, data = http_get("/api/v1/maintenance-tasks?department=S%26T", token=self.token)
         self.assertEqual(status, 200)
         self.assertGreater(data["total"], 0)
         for item in data["items"]:
             self.assertEqual(item["department"], "S&T")
 
-    def test_13_maintenance_tasks_severity_filter(self):
-        """13. GET /api/v1/maintenance-tasks?severity=Critical filters properly."""
-        status, data = http_get("/api/v1/maintenance-tasks?severity=Critical")
+    def test_14_maintenance_tasks_severity_filter(self):
+        """14. GET /api/v1/maintenance-tasks?severity=Critical filters properly."""
+        self.assertIsNotNone(self.token)
+        status, data = http_get("/api/v1/maintenance-tasks?severity=Critical", token=self.token)
         self.assertEqual(status, 200)
         self.assertGreater(data["total"], 0)
         for item in data["items"]:
             self.assertEqual(item["severity"], "Critical")
 
-    def test_14_maintenance_tasks_get_valid_and_invalid(self):
-        """14. GET /api/v1/maintenance-tasks/{task_id} valid and 404."""
-        status, data = http_get("/api/v1/maintenance-tasks/WO-0001")
+    def test_15_maintenance_tasks_get_valid_and_invalid(self):
+        """15. GET /api/v1/maintenance-tasks/{task_id} valid and 404."""
+        self.assertIsNotNone(self.token)
+        status, data = http_get("/api/v1/maintenance-tasks/WO-0001", token=self.token)
         self.assertEqual(status, 200)
         self.assertEqual(data["task_id"], "WO-0001")
 
-        status, data = http_get("/api/v1/maintenance-tasks/TSK-99999")
+        status, data = http_get("/api/v1/maintenance-tasks/TSK-99999", token=self.token)
         self.assertEqual(status, 404)
 
-    def test_15_pagination(self):
-        """15. Pagination metadata and slices work accurately."""
+    def test_16_pagination(self):
+        """16. Pagination metadata and slices work accurately."""
         status, data = http_get("/api/v1/assets?page=1&page_size=10")
         self.assertEqual(status, 200)
         self.assertEqual(data["total"], 101)
@@ -166,8 +211,8 @@ class TestApiV1(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(len(data2["items"]), 1)
 
-    def test_16_validation_error_page_params(self):
-        """16. Invalid page/page_size triggers 422 Unprocessable Entity."""
+    def test_17_validation_error_page_params(self):
+        """17. Invalid page/page_size triggers 422 Unprocessable Entity."""
         status, data = http_get("/api/v1/assets?page=0")
         self.assertEqual(status, 422)
 

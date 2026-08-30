@@ -1,21 +1,41 @@
-"""Maintenance tasks API router."""
+"""Maintenance tasks API router with RBAC role authorization."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.security import User, require_roles
 from app.schemas.common import PaginatedResponse
 from app.schemas.maintenance import MaintenanceTaskDetailResponse, MaintenanceTaskResponse
 from app.services.maintenance_service import MaintenanceService
 
 router = APIRouter(prefix="/maintenance-tasks", tags=["Maintenance Tasks"])
 
+# Roles authorized to view maintenance task records
+MAINTENANCE_READ_ROLES = (
+    "ADMIN",
+    "PLANNER",
+    "ENGINEERING",
+    "SNT",
+    "TRD",
+    "CONTROL",
+    "APPROVER",
+    "VIEWER",
+)
+
 
 @router.get(
     "",
     response_model=PaginatedResponse[MaintenanceTaskResponse],
-    summary="List maintenance tasks",
-    description="Retrieve a paginated list of maintenance tasks / defect work-orders with optional filters.",
+    summary="List maintenance tasks (RBAC Protected)",
+    description=(
+        "Retrieve a paginated list of maintenance tasks. "
+        "Requires authentication and one of: ADMIN, PLANNER, ENGINEERING, SNT, TRD, CONTROL, APPROVER, VIEWER."
+    ),
+    responses={
+        401: {"description": "Missing, invalid, or expired authentication token"},
+        403: {"description": "Insufficient role privileges"},
+    },
 )
 async def list_maintenance_tasks(
     department: str | None = Query(None, description="Filter by department (Engineering, S&T, TRD)"),
@@ -24,9 +44,10 @@ async def list_maintenance_tasks(
     section_id: str | None = Query(None, description="Filter by section ID"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
+    current_user: User = Depends(require_roles(*MAINTENANCE_READ_ROLES)),
     db: AsyncSession = Depends(get_db),
 ) -> PaginatedResponse[MaintenanceTaskResponse]:
-    """List maintenance tasks with pagination and filters."""
+    """List maintenance tasks with pagination and filters for authorized users."""
     items, total = await MaintenanceService.get_maintenance_tasks(
         db=db,
         department=department,
@@ -47,15 +68,23 @@ async def list_maintenance_tasks(
 @router.get(
     "/{task_id}",
     response_model=MaintenanceTaskDetailResponse,
-    summary="Get maintenance task details",
-    description="Retrieve detailed attributes of a specific maintenance work-order by its task identifier.",
-    responses={404: {"description": "Maintenance task not found"}},
+    summary="Get maintenance task details (RBAC Protected)",
+    description=(
+        "Retrieve detailed attributes of a specific maintenance task. "
+        "Requires authentication and one of: ADMIN, PLANNER, ENGINEERING, SNT, TRD, CONTROL, APPROVER, VIEWER."
+    ),
+    responses={
+        401: {"description": "Missing, invalid, or expired authentication token"},
+        403: {"description": "Insufficient role privileges"},
+        404: {"description": "Maintenance task not found"},
+    },
 )
 async def get_maintenance_task(
     task_id: str,
+    current_user: User = Depends(require_roles(*MAINTENANCE_READ_ROLES)),
     db: AsyncSession = Depends(get_db),
 ) -> MaintenanceTaskDetailResponse:
-    """Get maintenance task details by task ID."""
+    """Get maintenance task details by task ID for authorized users."""
     task = await MaintenanceService.get_maintenance_task_by_id(db=db, task_id=task_id)
     if not task:
         raise HTTPException(
