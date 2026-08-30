@@ -210,6 +210,7 @@ class CPSATSolver:
 
         # 4. Objective Function Formulation
         objective_terms = []
+        candidate_realized_priority: dict[str, float] = {}
 
         # A. Candidate-level contributions & penalties
         for c in selectable_candidates:
@@ -219,6 +220,7 @@ class CPSATSolver:
             c_prio = sum(task_map[t_id].priority_score for t_id in c.task_ids if t_id in task_map)
             if c_prio == 0.0:
                 c_prio = c.priority_score
+            candidate_realized_priority[c.candidate_id] = round(c_prio, 2)
             prio_coeff = int(round(weights.weight_priority_score * c_prio * OBJECTIVE_SCALE))
 
             # 2. Integrated task synergy bonus (multi-task / multi-department co-location)
@@ -325,6 +327,7 @@ class CPSATSolver:
                         freight_impact=c.freight_level,
                         resource_status=c.resource_check,
                         priority_value=c.priority_score,
+                        realized_priority_value=candidate_realized_priority.get(c.candidate_id, c.priority_score),
                         compatibility_value=c.compatibility_score,
                         reasons=c.reasons,
                     )

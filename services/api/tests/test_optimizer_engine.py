@@ -670,6 +670,31 @@ class TestCPSATSolverRealData(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.scheduled_blocks[0].candidate_id, "CAND-HIGH")
             self.assertIn(low_task.task_id, result.unassigned_tasks)
 
+    def test_17_realized_priority_matches_summed_task_priority(self):
+        """17. Realized priority on scheduled block exactly matches summed task priorities, distinct from candidate score."""
+        t1 = make_test_task("WO-P1", priority=85.5)
+        t2 = make_test_task("WO-P2", priority=62.25)
+        expected_realized = round(85.5 + 62.25, 2)  # 147.75
+
+        # Build candidate with deliberately different candidate priority_score (e.g. 50.0)
+        c = make_test_candidate(
+            "CAND-MULTI-PRIO",
+            task_ids=["WO-P1", "WO-P2"],
+            prio=50.0,
+            comp_score=90.0,
+        )
+
+        result = CPSATSolver.solve(
+            tasks=[t1, t2],
+            candidates=[c],
+        )
+
+        self.assertEqual(result.solver_status, SolverStatus.OPTIMAL)
+        self.assertEqual(len(result.scheduled_blocks), 1)
+        block = result.scheduled_blocks[0]
+        self.assertEqual(block.priority_value, 50.0)  # 5C candidate-stage score
+        self.assertEqual(block.realized_priority_value, expected_realized)  # Authentic summed task priorities
+
 
 if __name__ == "__main__":
     unittest.main()

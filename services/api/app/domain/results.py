@@ -44,8 +44,9 @@ class OptimizedBlockDomain:
     train_conflict_count: int = 0
     freight_impact: str | None = None
     resource_status: str = "UNVERIFIED"
-    priority_value: float = 0.0
-    compatibility_value: float = 100.0
+    priority_value: float = 0.0  # Candidate-stage priority score from Batch 5C
+    realized_priority_value: float = 0.0  # Authentic summed task-priority value driving the CP-SAT objective decision
+    compatibility_value: float = 100.0  # Multi-task integration compatibility score
     reasons: list[str] = field(default_factory=list)
 
 
