@@ -15,6 +15,8 @@ import {
   Train,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "react-oidc-context";
+import { extractRoles, isRouteAllowedForRoles } from "@/lib/auth-config";
 
 export interface NavItem {
   label: string;
@@ -41,6 +43,14 @@ interface SidebarProps {
 
 export function Sidebar({ className, onNavigate }: SidebarProps) {
   const pathname = usePathname();
+  const auth = useAuth();
+  const userRoles = extractRoles(auth?.user);
+
+  // Filter visible items by authenticated user's roles (UX visibility only)
+  // Backend enforces real RBAC
+  const visibleNavItems = NAV_ITEMS.filter((item) =>
+    isRouteAllowedForRoles(item.href, userRoles)
+  );
 
   return (
     <aside
@@ -73,8 +83,8 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
         <div className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
           Operational Modules
         </div>
-        <nav className="space-y-0.5">
-          {NAV_ITEMS.map((item) => {
+        <nav className="space-y-0.5" aria-label="Operational modules">
+          {visibleNavItems.map((item) => {
             const isActive =
               pathname === item.href || pathname?.startsWith(`${item.href}/`);
             const Icon = item.icon;
