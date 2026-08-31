@@ -588,6 +588,7 @@ export default function OptimizationRunPage({ params }: OptimizationRunPageProps
           <NetworkMapPlaceholder
             sectionCount={availableSections.length}
             blockCount={rawBlocks.length}
+            runId={run.id}
           />
         </>
       )}

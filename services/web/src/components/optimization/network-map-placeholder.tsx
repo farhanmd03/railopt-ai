@@ -1,17 +1,21 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
+import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
-import { Map, MapPin, Navigation, Route, Sparkles } from "lucide-react";
+import { ExternalLink, Layers, Map, MapPin, Maximize2, Navigation, Route, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface NetworkMapPlaceholderProps {
   sectionCount?: number;
   blockCount?: number;
+  runId?: number | string;
 }
 
 export function NetworkMapPlaceholder({
   sectionCount = 0,
   blockCount = 0,
+  runId,
 }: NetworkMapPlaceholderProps) {
   return (
     <Card className="border-border bg-card shadow-xs overflow-hidden">
@@ -22,9 +26,15 @@ export function NetworkMapPlaceholder({
             Railway Network View (PostGIS Spatial Overlay)
           </span>
         </div>
-        <span className="text-[11px] text-muted-foreground">
-          Dedicated GIS Corridor Integration Module
-        </span>
+        {runId && (
+          <Link
+            href={`/map?run=${runId}`}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
+          >
+            <span>Open in Interactive Network Map</span>
+            <ExternalLink className="h-3 w-3" />
+          </Link>
+        )}
       </div>
 
       <CardContent className="p-6 text-center space-y-4">
@@ -37,11 +47,11 @@ export function NetworkMapPlaceholder({
             Spatial Corridor Visualization Interface
           </h4>
           <p className="text-xs text-muted-foreground">
-            Interactive PostGIS track geometry map with real-time section possessions, signal boundaries, and corridor work zones will be integrated here in Batch 10.
+            Interactive PostGIS track geometry map and OpenStreetMap corridor interface with scheduled section possessions, station nodes, and corridor work zones for Howrah Division.
           </p>
         </div>
 
-        <div className="flex justify-center gap-4 text-xs text-muted-foreground pt-1">
+        <div className="flex justify-center gap-4 text-xs text-muted-foreground pt-1 flex-wrap">
           <div className="flex items-center gap-1.5 bg-muted/40 px-3 py-1 rounded border border-border">
             <MapPin className="h-3.5 w-3.5 text-blue-600" />
             <span>{sectionCount} Active Sections Mapped</span>
@@ -50,6 +60,15 @@ export function NetworkMapPlaceholder({
             <Navigation className="h-3.5 w-3.5 text-purple-600" />
             <span>{blockCount} Scheduled Block Zones</span>
           </div>
+          {runId && (
+            <Link
+              href={`/map?run=${runId}`}
+              className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1 rounded border border-primary text-xs font-semibold hover:bg-blue-800 transition-colors"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+              <span>Inspect Full GIS Map</span>
+            </Link>
+          )}
         </div>
       </CardContent>
     </Card>
