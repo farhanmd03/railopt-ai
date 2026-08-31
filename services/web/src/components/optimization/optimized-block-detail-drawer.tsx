@@ -280,8 +280,15 @@ export function OptimizedBlockDetailDrawer({
         </div>
 
         {/* Footer */}
-        <div className="p-3 bg-muted/40 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
-          <span>Howrah Division • Optimization Results</span>
+        <div className="p-3 bg-muted/40 border-t border-border flex items-center justify-between text-xs text-muted-foreground gap-2 flex-wrap">
+          <Link
+            href={`/map?run=${block.optimization_run_id}&section=${block.section_id}`}
+            className="inline-flex items-center gap-1.5 bg-card border border-border hover:bg-muted text-foreground px-2.5 py-1.5 rounded text-xs font-semibold shadow-xs transition-colors"
+          >
+            <MapPin className="h-3.5 w-3.5 text-blue-600" />
+            <span>View on Map</span>
+            <ExternalLink className="h-3 w-3 text-muted-foreground" />
+          </Link>
           <Button variant="outline" size="sm" onClick={onClose} className="h-8 text-xs">
             Close
           </Button>
