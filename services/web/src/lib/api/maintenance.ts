@@ -49,3 +49,12 @@ export function getIntegrationOpportunities(
     params as Record<string, string | number | boolean>
   );
 }
+
+export function getTaskIntegrationOpportunities(
+  taskId: string
+): Promise<IntegrationOpportunity[]> {
+  return apiGet<IntegrationOpportunity[]>(
+    `/api/v1/maintenance-tasks/${encodeURIComponent(taskId)}/integration-opportunities`
+  );
+}
+
