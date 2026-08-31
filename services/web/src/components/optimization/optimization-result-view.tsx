@@ -83,13 +83,21 @@ export function OptimizationResultView({ run }: OptimizationResultViewProps) {
             </p>
           </div>
 
-          <div className="text-right shrink-0">
-            <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
-              Objective Value
-            </span>
-            <span className="font-mono text-xl font-extrabold text-blue-600">
-              {formatScore(run.objective_value)}
-            </span>
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="text-right">
+              <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
+                Objective Value
+              </span>
+              <span className="font-mono text-xl font-extrabold text-blue-600">
+                {formatScore(run.objective_value)}
+              </span>
+            </div>
+            <Link href={`/optimization/runs/${run.id}`}>
+              <Button size="sm" className="h-8 gap-1 text-xs bg-blue-600 hover:bg-blue-700 text-white">
+                <Clock className="h-3.5 w-3.5" />
+                <span>Planning Timeline</span>
+              </Button>
+            </Link>
           </div>
         </div>
 
