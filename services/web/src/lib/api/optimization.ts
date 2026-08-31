@@ -49,3 +49,33 @@ export function createOptimizationRun(
 ): Promise<OptimizationRun> {
   return apiPost<OptimizationRun>("/api/v1/optimization/runs", request);
 }
+
+export function submitOptimizationRun(runId: string | number): Promise<OptimizationRun> {
+  return apiPost<OptimizationRun>(`/api/v1/optimization/runs/${encodeURIComponent(String(runId))}/submit`, {});
+}
+
+export function approveOptimizationRun(runId: string | number): Promise<OptimizationRun> {
+  return apiPost<OptimizationRun>(`/api/v1/optimization/runs/${encodeURIComponent(String(runId))}/approve`, {});
+}
+
+export function rejectOptimizationRun(
+  runId: string | number,
+  reason: string
+): Promise<OptimizationRun> {
+  return apiPost<OptimizationRun>(`/api/v1/optimization/runs/${encodeURIComponent(String(runId))}/reject`, {
+    reason,
+  });
+}
+
+export interface AuditLogListResponse {
+  items: import("../types/audit").AuditLog[];
+  total: number;
+}
+
+export function getOptimizationRunAuditTrail(
+  runId: string | number
+): Promise<AuditLogListResponse> {
+  return apiGet<AuditLogListResponse>(
+    `/api/v1/audit/optimization-runs/${encodeURIComponent(String(runId))}`
+  );
+}

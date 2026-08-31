@@ -82,8 +82,16 @@ function DialogFooter({
   );
 }
 
+function DialogContent({
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn("space-y-3", className)} {...props} />;
+}
+
 export {
   Dialog,
+  DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,

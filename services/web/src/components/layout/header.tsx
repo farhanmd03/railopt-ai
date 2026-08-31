@@ -26,7 +26,8 @@ export function Header({ onToggleMobileNav }: HeaderProps) {
     }
   };
 
-  const primaryRole = authUser?.roles?.[0] || "VIEWER";
+  const hasRoles = !!authUser && authUser.roles.length > 0;
+  const primaryRole = hasRoles ? authUser.roles[0] : "No application role";
 
   return (
     <header className="flex h-14 items-center justify-between border-b border-border bg-card px-4 lg:px-6 select-none shrink-0 relative">
@@ -84,8 +85,10 @@ export function Header({ onToggleMobileNav }: HeaderProps) {
                 {authUser?.name || "Authenticated User"}
               </span>
               <span className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                <Shield className="h-2.5 w-2.5 text-blue-600" />
-                <span>{primaryRole}</span>
+                <Shield className={`h-2.5 w-2.5 ${hasRoles ? "text-blue-600" : "text-muted-foreground"}`} />
+                <span className={hasRoles ? "font-semibold text-foreground" : "text-muted-foreground italic"}>
+                  {primaryRole}
+                </span>
               </span>
             </div>
           </button>
@@ -106,14 +109,20 @@ export function Header({ onToggleMobileNav }: HeaderProps) {
                     {authUser?.email || authUser?.username}
                   </p>
                   <div className="mt-1 flex flex-wrap gap-1">
-                    {authUser?.roles?.map((r) => (
-                      <span
-                        key={r}
-                        className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-blue-50 text-blue-700 border border-blue-200"
-                      >
-                        {r}
+                    {hasRoles ? (
+                      authUser?.roles?.map((r) => (
+                        <span
+                          key={r}
+                          className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-blue-50 text-blue-700 border border-blue-200"
+                        >
+                          {r}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground italic">
+                        No roles assigned
                       </span>
-                    ))}
+                    )}
                   </div>
                 </div>
 

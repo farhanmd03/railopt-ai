@@ -66,4 +66,54 @@ describe("Header Authentication & User Display", () => {
     fireEvent.click(signOutBtn);
     expect(mockSignoutRedirect).toHaveBeenCalledTimes(1);
   });
+
+  it("does NOT display VIEWER when user has no roles assigned", () => {
+    vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
+      isAuthenticated: true,
+      user: {
+        profile: {
+          sub: "user-empty",
+          preferred_username: "noroles.demo",
+          given_name: "NoRole",
+          family_name: "User",
+          realm_access: {
+            roles: [],
+          },
+        },
+      },
+      signoutRedirect: vi.fn(),
+      removeUser: vi.fn(),
+    } as unknown as reactOidcContext.AuthContextProps);
+
+    render(<Header />);
+
+    // Must show user name and 'No application role', and NOT 'VIEWER'
+    expect(screen.getByText("NoRole User")).toBeInTheDocument();
+    expect(screen.getByText("No application role")).toBeInTheDocument();
+    expect(screen.queryByText("VIEWER")).not.toBeInTheDocument();
+  });
+
+  it("displays VIEWER when user genuinely has VIEWER role assigned", () => {
+    vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
+      isAuthenticated: true,
+      user: {
+        profile: {
+          sub: "user-viewer",
+          preferred_username: "viewer.demo",
+          given_name: "Guest",
+          family_name: "Viewer",
+          realm_access: {
+            roles: ["VIEWER"],
+          },
+        },
+      },
+      signoutRedirect: vi.fn(),
+      removeUser: vi.fn(),
+    } as unknown as reactOidcContext.AuthContextProps);
+
+    render(<Header />);
+
+    expect(screen.getByText("Guest Viewer")).toBeInTheDocument();
+    expect(screen.getByText("VIEWER")).toBeInTheDocument();
+  });
 });

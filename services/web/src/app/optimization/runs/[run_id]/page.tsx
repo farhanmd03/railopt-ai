@@ -14,6 +14,8 @@ import { PlanningTimeline } from "@/components/optimization/planning-timeline";
 import { OptimizedBlockDetailDrawer } from "@/components/optimization/optimized-block-detail-drawer";
 import { NetworkMapPlaceholder } from "@/components/optimization/network-map-placeholder";
 import { OptimizationHistory } from "@/components/optimization/optimization-history";
+import { ApprovalWorkflowPanel } from "@/components/optimization/approval-workflow-panel";
+import { ApprovalAuditHistory } from "@/components/optimization/approval-audit-history";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { LoadingState } from "@/components/feedback/loading-state";
@@ -315,7 +317,16 @@ export default function OptimizationRunPage({ params }: OptimizationRunPageProps
         </div>
       </div>
 
-      {/* 3. Infeasible or Unknown Result Handling */}
+      {/* 3. Human Approval Workflow & Audit Trail */}
+      <ApprovalWorkflowPanel
+        run={run}
+        user={user}
+        onStateChange={handleRefresh}
+      />
+
+      <ApprovalAuditHistory runId={run.id} />
+
+      {/* 4. Infeasible or Unknown Result Handling */}
       {isInfeasible ? (
         <div className="bg-card border border-border rounded p-8 text-center space-y-4 shadow-xs">
           <div className="inline-flex p-3 rounded-full bg-red-100 dark:bg-red-950 text-red-600">

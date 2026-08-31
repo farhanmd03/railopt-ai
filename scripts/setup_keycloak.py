@@ -222,6 +222,28 @@ def provision_keycloak():
     _, existing_roles = api_request(f"/admin/realms/{REALM_NAME}/roles", token=token)
     role_map = {r["name"]: r for r in existing_roles}
 
+    # 3.5. Configure Client Scope 'roles' protocol mappers to include roles in ID Token & UserInfo
+    logger.info("Configuring protocol mappers on client scope 'roles'...")
+    _, scopes = api_request(f"/admin/realms/{REALM_NAME}/client-scopes", token=token)
+    roles_scope = next((s for s in scopes if s["name"] == "roles"), None)
+    if roles_scope:
+        scope_id = roles_scope["id"]
+        _, mappers = api_request(
+            f"/admin/realms/{REALM_NAME}/client-scopes/{scope_id}/protocol-mappers/models",
+            token=token,
+        )
+        for mapper in mappers:
+            if mapper.get("name") in ("realm roles", "client roles"):
+                mapper["config"]["id.token.claim"] = "true"
+                mapper["config"]["userinfo.token.claim"] = "true"
+                api_request(
+                    f"/admin/realms/{REALM_NAME}/client-scopes/{scope_id}/protocol-mappers/models/{mapper['id']}",
+                    method="PUT",
+                    token=token,
+                    data=mapper,
+                )
+                logger.info("Configured mapper '%s' on scope 'roles' with id.token.claim=true", mapper.get("name"))
+
     # 4. Create Demo Test Users
     logger.info("Provisioning demo test users...")
     status, existing_users = api_request(f"/admin/realms/{REALM_NAME}/users", token=token)

@@ -9,6 +9,7 @@ Endpoints:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import logging
 import math
@@ -23,12 +24,15 @@ from app.core.database import get_db
 from app.core.security import User, require_roles
 from app.domain.constraints import HardConstraintConfig
 from app.domain.objectives import ObjectiveWeights
+from app.models.admin import AuditLog
 from app.models.optimization import (
     OptimizationRun,
     OptimizedBlock,
     OptimizedBlockTask,
 )
+from app.schemas.audit import AuditLogListResponse, AuditLogResponse
 from app.schemas.optimization import (
+    OptimizationRejectRequest,
     OptimizationRunCreateRequest,
     OptimizationRunDetailResponse,
     OptimizationRunResponse,
@@ -129,6 +133,14 @@ def _format_run_response(run: OptimizationRun) -> OptimizationRunResponse:
         unassigned_task_ids=param_data.get("unassigned_tasks", []),
         warnings=param_data.get("warnings", []),
         notes=run.notes,
+        approval_status=run.approval_status or "DRAFT",
+        submitted_by=run.submitted_by,
+        submitted_at=run.submitted_at,
+        approved_by=run.approved_by,
+        approved_at=run.approved_at,
+        rejected_by=run.rejected_by,
+        rejected_at=run.rejected_at,
+        rejection_reason=run.rejection_reason,
         created_at=run.created_at,
     )
 
@@ -399,3 +411,313 @@ async def get_optimization_run_blocks(
         page_size=page_size,
         total_pages=total_pages,
     )
+
+
+# ── Human Approval Workflow Endpoints (Batch 7J) ──────────────────────────
+
+PLANNER_SUBMIT_ROLES = ("ADMIN", "PLANNER")
+APPROVER_ROLES = ("ADMIN", "APPROVER")
+
+
+@router.post(
+    "/runs/{run_id}/submit",
+    response_model=OptimizationRunResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Submit optimization run for human review (RBAC: ADMIN, PLANNER)",
+    description=(
+        "Transitions an optimization run from DRAFT (or REJECTED) into SUBMITTED for human operational review. "
+        "Atomically persists the state change and records an immutable audit log entry."
+    ),
+    responses={
+        200: {"description": "Optimization run successfully submitted for review"},
+        401: {"description": "Missing, invalid, or expired authentication token"},
+        403: {"description": "Insufficient role privileges (requires ADMIN or PLANNER)"},
+        404: {"description": "Optimization run not found"},
+        409: {"description": "Invalid state transition or concurrency conflict"},
+    },
+)
+async def submit_optimization_run(
+    run_id: str,
+    current_user: User = Depends(require_roles(*PLANNER_SUBMIT_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> OptimizationRunResponse:
+    """Submit an optimization plan for formal operational approval."""
+    run = await _resolve_run(run_id, db)
+    current_status = run.approval_status or "DRAFT"
+
+    if current_status not in ("DRAFT", "REJECTED"):
+        if current_status == "SUBMITTED":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Optimization run '{run_id}' is already submitted for approval.",
+            )
+        if current_status == "APPROVED":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Optimization run '{run_id}' has already been officially approved.",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot submit optimization run in state '{current_status}'.",
+        )
+
+    now = datetime.now(timezone.utc)
+    prev_status = current_status
+
+    # State update
+    run.approval_status = "SUBMITTED"
+    run.submitted_by = current_user.username
+    run.submitted_at = now
+    run.rejection_reason = None  # Clear prior rejection note on resubmit
+
+    # Atomic audit log creation
+    audit_event = AuditLog(
+        timestamp=now,
+        user_id=current_user.username,
+        action="SUBMITTED",
+        entity_type="OptimizationRun",
+        entity_id=str(run.id),
+        before_value=json.dumps({"approval_status": prev_status}),
+        after_value=json.dumps({
+            "approval_status": "SUBMITTED",
+            "submitted_by": current_user.username,
+            "submitted_at": now.isoformat(),
+        }),
+        details="Optimization plan submitted for human operational review.",
+    )
+    db.add(audit_event)
+
+    await db.commit()
+    await db.refresh(run)
+
+    logger.info(
+        "Optimization run %s submitted for approval by '%s'",
+        run.id,
+        current_user.username,
+    )
+    return _format_run_response(run)
+
+
+@router.post(
+    "/runs/{run_id}/approve",
+    response_model=OptimizationRunResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Approve optimization plan (RBAC: ADMIN, APPROVER)",
+    description=(
+        "Officially approves a SUBMITTED optimization plan for railway possession execution. "
+        "Atomically persists the approval status and creates an immutable audit trail entry. "
+        "Does NOT alter mathematical solver outputs or block schedules."
+    ),
+    responses={
+        200: {"description": "Optimization plan officially approved"},
+        401: {"description": "Missing, invalid, or expired authentication token"},
+        403: {"description": "Insufficient role privileges (requires ADMIN or APPROVER)"},
+        404: {"description": "Optimization run not found"},
+        409: {"description": "Invalid state transition or concurrency conflict"},
+    },
+)
+async def approve_optimization_run(
+    run_id: str,
+    current_user: User = Depends(require_roles(*APPROVER_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> OptimizationRunResponse:
+    """Approve a submitted optimization run."""
+    run = await _resolve_run(run_id, db)
+    current_status = run.approval_status or "DRAFT"
+
+    if current_status != "SUBMITTED":
+        if current_status == "APPROVED":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Optimization run '{run_id}' is already approved.",
+            )
+        if current_status == "DRAFT":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Optimization run '{run_id}' must be submitted for review before it can be approved.",
+            )
+        if current_status == "REJECTED":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Rejected optimization run '{run_id}' cannot be approved directly. It must be resubmitted first.",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot approve optimization run in state '{current_status}'.",
+        )
+
+    now = datetime.now(timezone.utc)
+    prev_status = current_status
+
+    # State update
+    run.approval_status = "APPROVED"
+    run.approved_by = current_user.username
+    run.approved_at = now
+
+    # Atomic audit log creation
+    audit_event = AuditLog(
+        timestamp=now,
+        user_id=current_user.username,
+        action="APPROVED",
+        entity_type="OptimizationRun",
+        entity_id=str(run.id),
+        before_value=json.dumps({"approval_status": prev_status}),
+        after_value=json.dumps({
+            "approval_status": "APPROVED",
+            "approved_by": current_user.username,
+            "approved_at": now.isoformat(),
+        }),
+        details="Optimization plan officially approved by operational authority.",
+    )
+    db.add(audit_event)
+
+    await db.commit()
+    await db.refresh(run)
+
+    logger.info(
+        "Optimization run %s approved by '%s'",
+        run.id,
+        current_user.username,
+    )
+    return _format_run_response(run)
+
+
+@router.post(
+    "/runs/{run_id}/reject",
+    response_model=OptimizationRunResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Reject optimization plan with mandatory reason (RBAC: ADMIN, APPROVER)",
+    description=(
+        "Rejects a SUBMITTED optimization plan. Requires a mandatory meaningful explanation (min 5 characters). "
+        "Atomically persists the rejection state and records an immutable audit log entry."
+    ),
+    responses={
+        200: {"description": "Optimization plan successfully rejected"},
+        401: {"description": "Missing, invalid, or expired authentication token"},
+        403: {"description": "Insufficient role privileges (requires ADMIN or APPROVER)"},
+        404: {"description": "Optimization run not found"},
+        409: {"description": "Invalid state transition or concurrency conflict"},
+        422: {"description": "Invalid payload (missing or too short rejection reason)"},
+    },
+)
+async def reject_optimization_run(
+    run_id: str,
+    payload: OptimizationRejectRequest,
+    current_user: User = Depends(require_roles(*APPROVER_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> OptimizationRunResponse:
+    """Reject a submitted optimization run with recorded explanation."""
+    run = await _resolve_run(run_id, db)
+    current_status = run.approval_status or "DRAFT"
+
+    if current_status != "SUBMITTED":
+        if current_status == "APPROVED":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Cannot reject an already approved optimization run '{run_id}'.",
+            )
+        if current_status == "REJECTED":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Optimization run '{run_id}' is already rejected.",
+            )
+        if current_status == "DRAFT":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Optimization run '{run_id}' must be submitted for review before it can be rejected.",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot reject optimization run in state '{current_status}'.",
+        )
+
+    now = datetime.now(timezone.utc)
+    prev_status = current_status
+    clean_reason = payload.reason.strip()
+
+    # State update
+    run.approval_status = "REJECTED"
+    run.rejected_by = current_user.username
+    run.rejected_at = now
+    run.rejection_reason = clean_reason
+
+    # Atomic audit log creation
+    audit_event = AuditLog(
+        timestamp=now,
+        user_id=current_user.username,
+        action="REJECTED",
+        entity_type="OptimizationRun",
+        entity_id=str(run.id),
+        before_value=json.dumps({"approval_status": prev_status}),
+        after_value=json.dumps({
+            "approval_status": "REJECTED",
+            "rejected_by": current_user.username,
+            "rejected_at": now.isoformat(),
+            "rejection_reason": clean_reason,
+        }),
+        details=clean_reason,
+    )
+    db.add(audit_event)
+
+    await db.commit()
+    await db.refresh(run)
+
+    logger.info(
+        "Optimization run %s rejected by '%s' with reason: %s",
+        run.id,
+        current_user.username,
+        clean_reason,
+    )
+    return _format_run_response(run)
+
+
+@router.get(
+    "/runs/{run_id}/audit",
+    response_model=AuditLogListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get chronological audit trail for optimization run (RBAC: Authenticated Users)",
+    description="Retrieves the immutable, chronological audit trail of all state transitions and review decisions for this optimization run.",
+    responses={
+        200: {"description": "List of chronological audit log entries"},
+        401: {"description": "Missing, invalid, or expired authentication token"},
+        403: {"description": "Insufficient role privileges"},
+        404: {"description": "Optimization run not found"},
+    },
+)
+async def get_optimization_run_audit_trail(
+    run_id: str,
+    current_user: User = Depends(require_roles(*OPTIMIZATION_READ_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> AuditLogListResponse:
+    """Retrieve chronological audit trail for a specific optimization run."""
+    run = await _resolve_run(run_id, db)
+
+    stmt = (
+        select(AuditLog)
+        .where(
+            AuditLog.entity_type == "OptimizationRun",
+            AuditLog.entity_id == str(run.id),
+        )
+        .order_by(AuditLog.timestamp.asc(), AuditLog.id.asc())
+    )
+    audit_logs = (await db.scalars(stmt)).all()
+
+    return AuditLogListResponse(
+        items=[
+            AuditLogResponse(
+                id=a.id,
+                timestamp=a.timestamp,
+                user_id=a.user_id,
+                action=a.action,
+                entity_type=a.entity_type,
+                entity_id=a.entity_id,
+                before_value=a.before_value,
+                after_value=a.after_value,
+                details=a.details,
+                ip_address=a.ip_address,
+            )
+            for a in audit_logs
+        ],
+        total=len(audit_logs),
+    )
+

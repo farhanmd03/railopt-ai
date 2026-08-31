@@ -113,31 +113,85 @@ export function getOidcConfig(): AuthProviderProps {
 }
 
 /**
+ * Safely decodes an unencrypted JWT payload without external libraries.
+ */
+export function parseJwtPayload(token: string | null | undefined): Record<string, unknown> | null {
+  if (!token || typeof token !== "string") return null;
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    const base64Url = parts[1];
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+    const jsonStr =
+      typeof window !== "undefined" && typeof window.atob === "function"
+        ? decodeURIComponent(
+            window
+              .atob(padded)
+              .split("")
+              .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+              .join("")
+          )
+        : Buffer.from(padded, "base64").toString("utf-8");
+    return JSON.parse(jsonStr);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Extract authenticated roles from standard Keycloak token payload.
+ * Inspects both ID Token profile and Access Token claims.
+ * Strictly whitelists against approved APP_ROLES.
  */
 export function extractRoles(user: User | null | undefined): AppRole[] {
-  if (!user || !user.profile) {
+  if (!user) {
     return [];
   }
 
-  const profile = user.profile as Record<string, unknown>;
   const extracted = new Set<string>();
 
-  // 1. Check realm_access.roles
-  const realmAccess = profile.realm_access as { roles?: string[] } | undefined;
-  if (realmAccess?.roles && Array.isArray(realmAccess.roles)) {
-    realmAccess.roles.forEach((r) => extracted.add(r.toUpperCase()));
+  const processPayload = (payload: Record<string, unknown> | null | undefined) => {
+    if (!payload || typeof payload !== "object") return;
+
+    // 1. Check realm_access.roles
+    const realmAccess = payload.realm_access as { roles?: string[] } | undefined;
+    if (realmAccess?.roles && Array.isArray(realmAccess.roles)) {
+      realmAccess.roles.forEach((r) => {
+        if (typeof r === "string") extracted.add(r.toUpperCase());
+      });
+    }
+
+    // 2. Check resource_access[client_id].roles and resource_access['railopt-web'].roles
+    const resourceAccess = payload.resource_access as Record<string, { roles?: string[] }> | undefined;
+    if (resourceAccess && typeof resourceAccess === "object") {
+      const clientAccess = resourceAccess[KEYCLOAK_CLIENT_ID] || resourceAccess["railopt-web"];
+      if (clientAccess?.roles && Array.isArray(clientAccess.roles)) {
+        clientAccess.roles.forEach((r) => {
+          if (typeof r === "string") extracted.add(r.toUpperCase());
+        });
+      }
+    }
+
+    // 3. Check direct roles claim if mapped
+    if (Array.isArray(payload.roles)) {
+      payload.roles.forEach((r) => {
+        if (typeof r === "string") extracted.add(r.toUpperCase());
+      });
+    }
+  };
+
+  // 1. Inspect user.profile (ID Token & UserInfo claims)
+  if (user.profile) {
+    processPayload(user.profile as Record<string, unknown>);
   }
 
-  // 2. Check resource_access[client_id].roles
-  const resourceAccess = profile.resource_access as Record<string, { roles?: string[] }> | undefined;
-  if (resourceAccess && resourceAccess[KEYCLOAK_CLIENT_ID]?.roles) {
-    resourceAccess[KEYCLOAK_CLIENT_ID].roles?.forEach((r) => extracted.add(r.toUpperCase()));
-  }
-
-  // 3. Check direct roles claim if mapped
-  if (Array.isArray(profile.roles)) {
-    profile.roles.forEach((r) => extracted.add(String(r).toUpperCase()));
+  // 2. Inspect user.access_token (OAuth2 Access Token claims)
+  if (user.access_token) {
+    const accessTokenClaims = parseJwtPayload(user.access_token);
+    if (accessTokenClaims) {
+      processPayload(accessTokenClaims);
+    }
   }
 
   return APP_ROLES.filter((role) => extracted.has(role));

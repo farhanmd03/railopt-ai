@@ -136,8 +136,30 @@ class OptimizationRunResponse(BaseModel):
     estimated_total_block_hours: float = Field(0.0, description="Total possession hours across all scheduled blocks")
     unassigned_task_ids: list[str] = Field(default_factory=list, description="List of unassigned task IDs")
     warnings: list[str] = Field(default_factory=list, description="Warnings and constraint pruning logs")
-    notes: str | None = Field(None, description="Operational notes")
+    # Human Approval Workflow (Batch 7J)
+    approval_status: str = Field(
+        "DRAFT",
+        description="Human business approval state ('DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED')",
+    )
+    submitted_by: str | None = Field(None, description="Username of the planner who submitted for review")
+    submitted_at: datetime | None = Field(None, description="Timestamp when submitted for review")
+    approved_by: str | None = Field(None, description="Username of the authority who approved the plan")
+    approved_at: datetime | None = Field(None, description="Timestamp when approved")
+    rejected_by: str | None = Field(None, description="Username of the authority who rejected the plan")
+    rejected_at: datetime | None = Field(None, description="Timestamp when rejected")
+    rejection_reason: str | None = Field(None, description="Detailed explanation for rejection")
     created_at: datetime | None = Field(None, description="Timestamp when run was executed")
+
+
+class OptimizationRejectRequest(BaseModel):
+    """Payload to reject an optimization run submitted for approval."""
+
+    reason: str = Field(
+        ...,
+        min_length=5,
+        max_length=1000,
+        description="Mandatory meaningful explanation for rejecting the proposed plan (min 5 characters).",
+    )
 
 
 class OptimizationRunDetailResponse(OptimizationRunResponse):

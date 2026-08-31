@@ -46,6 +46,63 @@ describe("Auth Configuration & Role Mapping", () => {
     expect(roles).toContain("PLANNER");
   });
 
+  it("extracts roles from access_token JWT payload even if profile has no roles", () => {
+    // Generate base64url encoded payload with realm_access
+    const payload = {
+      sub: "admin-jwt-1",
+      preferred_username: "admin.demo",
+      realm_access: {
+        roles: ["default-roles-railopt", "offline_access", "ADMIN"],
+      },
+    };
+    const base64Payload = Buffer.from(JSON.stringify(payload)).toString("base64url");
+    const fakeAccessToken = `header.${base64Payload}.signature`;
+
+    const mockUser = {
+      profile: {
+        sub: "admin-jwt-1",
+        preferred_username: "admin.demo",
+        // No realm_access in profile
+      },
+      access_token: fakeAccessToken,
+    } as unknown as User;
+
+    const roles = extractRoles(mockUser);
+    expect(roles).toEqual(["ADMIN"]);
+  });
+
+  it("strictly ignores unknown or arbitrary roles and returns [] if none recognized", () => {
+    const mockUser = {
+      profile: {
+        sub: "unknown-user",
+        preferred_username: "unknown.demo",
+        realm_access: {
+          roles: ["SUPER_USER", "RANDOM_ROLE", "offline_access", "uma_authorization"],
+        },
+      },
+    } as unknown as User;
+
+    const roles = extractRoles(mockUser);
+    expect(roles).toEqual([]);
+  });
+
+  it("extracts individual standard roles: ADMIN, PLANNER, VIEWER", () => {
+    const adminUser = {
+      profile: { realm_access: { roles: ["ADMIN"] } },
+    } as unknown as User;
+    expect(extractRoles(adminUser)).toEqual(["ADMIN"]);
+
+    const plannerUser = {
+      profile: { realm_access: { roles: ["PLANNER"] } },
+    } as unknown as User;
+    expect(extractRoles(plannerUser)).toEqual(["PLANNER"]);
+
+    const viewerUser = {
+      profile: { realm_access: { roles: ["VIEWER"] } },
+    } as unknown as User;
+    expect(extractRoles(viewerUser)).toEqual(["VIEWER"]);
+  });
+
   it("handles null or undefined user profile safely", () => {
     expect(extractRoles(null)).toEqual([]);
     expect(extractRoles(undefined)).toEqual([]);

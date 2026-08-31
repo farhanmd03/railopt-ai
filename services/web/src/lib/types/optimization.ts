@@ -59,6 +59,14 @@ export interface OptimizationRun {
   unassigned_task_ids: string[];
   warnings: string[];
   notes: string | null;
+  approval_status?: "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED" | string;
+  submitted_by?: string | null;
+  submitted_at?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  rejected_by?: string | null;
+  rejected_at?: string | null;
+  rejection_reason?: string | null;
   created_at: string | null;
 }
 

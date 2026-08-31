@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.routers.assets import router as assets_router
+from app.routers.audit import router as audit_router
 from app.routers.candidate_blocks import router as candidate_blocks_router
 from app.routers.health import router as health_router
 from app.routers.maintenance import router as maintenance_router
@@ -74,6 +75,7 @@ api_v1_router.include_router(assets_router)
 api_v1_router.include_router(maintenance_router)
 api_v1_router.include_router(candidate_blocks_router)
 api_v1_router.include_router(optimization_router)
+api_v1_router.include_router(audit_router)
 
 app.include_router(api_v1_router)
 
