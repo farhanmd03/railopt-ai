@@ -52,11 +52,13 @@ class OptimizationService:
     async def prepare_domain_inputs(
         cls,
         db: AsyncSession,
+        excluded_candidate_ids: list[str] | None = None,
     ) -> tuple[list[OptimizationTask], list[OptimizationCandidate]]:
         """Load database records and convert them into domain contracts for the solver."""
         # 1. Generate candidate blocks from candidate engine
         cand_responses = await CandidateBlockEngine.generate_candidates(db)
 
+        excluded_set = set(excluded_candidate_ids or [])
         domain_candidates = [
             OptimizationCandidate(
                 candidate_id=c.candidate_id,
@@ -86,6 +88,7 @@ class OptimizationService:
                 reasons=c.reasons,
             )
             for c in cand_responses
+            if c.candidate_id not in excluded_set
         ]
 
         # 2. Extract unique task IDs present in the candidate universe
@@ -142,13 +145,16 @@ class OptimizationService:
         time_limit_seconds: float = 10.0,
         random_seed: int = 42,
         run_type: str = "standard",
+        excluded_candidate_ids: list[str] | None = None,
     ) -> tuple[OptimizationRun, OptimizationRunResult]:
         """Execute CP-SAT solve and atomically persist results to PostgreSQL."""
         weights = weights or ObjectiveWeights()
         hard_constraints = hard_constraints or HardConstraintConfig()
 
         # 1. Load domain inputs
-        domain_tasks, domain_candidates = await cls.prepare_domain_inputs(db)
+        domain_tasks, domain_candidates = await cls.prepare_domain_inputs(
+            db, excluded_candidate_ids=excluded_candidate_ids
+        )
 
         # 2. Execute in-memory mathematical solver
         run_result = CPSATSolver.solve(
@@ -196,6 +202,7 @@ class OptimizationService:
                 "unassigned_tasks": run_result.unassigned_tasks,
                 "warnings": run_result.warnings[:50] if len(run_result.warnings) > 50 else run_result.warnings,
                 "warning_count": len(run_result.warnings),
+                "excluded_candidate_ids": excluded_candidate_ids or [],
             }
 
             status_str = (
@@ -214,6 +221,7 @@ class OptimizationService:
                 solve_time_seconds=run_result.solver_runtime_seconds,
                 parameters=json.dumps(param_dict),
                 notes=f"Optimization run {run_result.run_id} executed with status {run_result.solver_status.value}",
+                approval_status="DRAFT",
             )
             db.add(run_record)
             await db.flush()  # Populates run_record.id
@@ -277,3 +285,169 @@ class OptimizationService:
             await db.rollback()
             logger.error("Failed to persist optimization run %s: %s", run_result.run_id, e)
             raise
+
+    @classmethod
+    def compute_run_comparison(
+        cls,
+        base_run: OptimizationRun,
+        scenario_run: OptimizationRun | None,
+        base_blocks: list[OptimizedBlock],
+        scenario_blocks: list[OptimizedBlock],
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        """Compute structured comparison metrics, task impact, and block differences."""
+        # 1. Base metrics
+        base_params = {}
+        try:
+            if base_run.parameters:
+                base_params = json.loads(base_run.parameters)
+        except Exception:
+            pass
+
+        base_metrics = base_params.get("metrics", {})
+        base_tasks_sched = base_metrics.get("tasks_scheduled")
+        if base_tasks_sched is None:
+            base_tasks_sched = sum(len(getattr(b, "tasks", [])) for b in base_blocks)
+        base_tasks_unassigned = base_metrics.get("tasks_unassigned", 0)
+        base_blocks_count = len(base_blocks) or (base_metrics.get("separate_block_count", 0) + base_metrics.get("integrated_block_count", 0))
+        base_integ_count = base_metrics.get("integrated_block_count", sum(1 for b in base_blocks if b.is_integrated))
+        base_hours = base_metrics.get("estimated_total_block_hours")
+        if base_hours is None:
+            base_hours = float(sum((float(b.block_duration_hrs or 0.0) for b in base_blocks), 0.0))
+        base_obj = float(base_run.objective_value or 0.0)
+
+        # 2. Scenario metrics
+        if scenario_run:
+            scen_params = {}
+            try:
+                if scenario_run.parameters:
+                    scen_params = json.loads(scenario_run.parameters)
+            except Exception:
+                pass
+
+            scen_metrics = scen_params.get("metrics", {})
+            scen_tasks_sched = scen_metrics.get("tasks_scheduled")
+            if scen_tasks_sched is None:
+                scen_tasks_sched = sum(len(getattr(b, "tasks", [])) for b in scenario_blocks)
+            scen_tasks_unassigned = scen_metrics.get("tasks_unassigned", 0)
+            scen_blocks_count = len(scenario_blocks) or (scen_metrics.get("separate_block_count", 0) + scen_metrics.get("integrated_block_count", 0))
+            scen_integ_count = scen_metrics.get("integrated_block_count", sum(1 for b in scenario_blocks if b.is_integrated))
+            scen_hours = scen_metrics.get("estimated_total_block_hours")
+            if scen_hours is None:
+                scen_hours = float(sum((float(b.block_duration_hrs or 0.0) for b in scenario_blocks), 0.0))
+            scen_obj = float(scenario_run.objective_value or 0.0)
+        else:
+            scen_tasks_sched = 0
+            scen_tasks_unassigned = 0
+            scen_blocks_count = 0
+            scen_integ_count = 0
+            scen_hours = 0.0
+            scen_obj = 0.0
+
+        comparison_summary = {
+            "tasks_scheduled": {
+                "original": float(base_tasks_sched),
+                "scenario": float(scen_tasks_sched),
+                "delta": float(scen_tasks_sched - base_tasks_sched),
+            },
+            "tasks_unassigned": {
+                "original": float(base_tasks_unassigned),
+                "scenario": float(scen_tasks_unassigned),
+                "delta": float(scen_tasks_unassigned - base_tasks_unassigned),
+            },
+            "block_count": {
+                "original": float(base_blocks_count),
+                "scenario": float(scen_blocks_count),
+                "delta": float(scen_blocks_count - base_blocks_count),
+            },
+            "integrated_blocks": {
+                "original": float(base_integ_count),
+                "scenario": float(scen_integ_count),
+                "delta": float(scen_integ_count - base_integ_count),
+            },
+            "estimated_total_block_hours": {
+                "original": round(base_hours, 2),
+                "scenario": round(scen_hours, 2),
+                "delta": round(scen_hours - base_hours, 2),
+            },
+            "objective_value": {
+                "original": round(base_obj, 2),
+                "scenario": round(scen_obj, 2),
+                "delta": round(scen_obj - base_obj, 2),
+            },
+        }
+
+        # Deterministic explanation narrative
+        if scenario_run and scenario_run.solver_status in ("OPTIMAL", "FEASIBLE"):
+            task_delta = int(scen_tasks_sched - base_tasks_sched)
+            block_delta = int(scen_blocks_count - base_blocks_count)
+            integ_delta = int(scen_integ_count - base_integ_count)
+            hours_delta = round(scen_hours - base_hours, 2)
+            obj_delta = round(scen_obj - base_obj, 2)
+
+            narrative_parts = [
+                f"Under this scenario, the resulting optimization scheduled {scen_tasks_sched} tasks ({task_delta:+d} vs base run), "
+                f"yielding {scen_blocks_count} total possession blocks ({block_delta:+d}) with an objective value of {scen_obj:.1f} ({obj_delta:+.1f})."
+            ]
+            if integ_delta != 0:
+                word = "more" if integ_delta > 0 else "fewer"
+                narrative_parts.append(
+                    f"Cross-department consolidation resulted in {abs(integ_delta)} {word} integrated possession blocks."
+                )
+            if hours_delta != 0:
+                word = "increased" if hours_delta > 0 else "decreased"
+                narrative_parts.append(
+                    f"Total corridor block duration {word} by {abs(hours_delta):.2f} hours."
+                )
+            if task_delta == 0 and block_delta == 0 and abs(obj_delta) < 0.01:
+                narrative_parts.append(
+                    "The specified assumption changes resulted in an equivalent operational block schedule."
+                )
+            explanation = " ".join(narrative_parts)
+        elif scenario_run and scenario_run.solver_status == "INFEASIBLE":
+            explanation = "No feasible plan was found under this scenario. The modified parameters violated hard constraints or horizon boundaries."
+        else:
+            explanation = "Scenario has not yet been solved or failed during execution."
+
+        comparison_summary["explanation"] = explanation
+
+        # 3. Task impact
+        base_task_map: dict[str, tuple[str, str]] = {}
+        for b in base_blocks:
+            for t in getattr(b, "tasks", []):
+                base_task_map[t.task_id] = (b.section_id or "", str(b.block_start or ""))
+
+        scen_task_map: dict[str, tuple[str, str]] = {}
+        for b in scenario_blocks:
+            for t in getattr(b, "tasks", []):
+                scen_task_map[t.task_id] = (b.section_id or "", str(b.block_start or ""))
+
+        retained = sorted(list(set(base_task_map.keys()) & set(scen_task_map.keys())))
+        newly_unassigned = sorted(list(set(base_task_map.keys()) - set(scen_task_map.keys())))
+        newly_scheduled = sorted(list(set(scen_task_map.keys()) - set(base_task_map.keys())))
+        changed_blocks = sorted([tid for tid in retained if base_task_map[tid] != scen_task_map[tid]])
+
+        task_impact = {
+            "retained_task_ids": retained,
+            "newly_unassigned_task_ids": newly_unassigned,
+            "newly_scheduled_task_ids": newly_scheduled,
+            "changed_block_task_ids": changed_blocks,
+        }
+
+        # 4. Block differences
+        base_keys = {(b.section_id, str(b.block_start), str(b.block_end)): b for b in base_blocks}
+        scen_keys = {(b.section_id, str(b.block_start), str(b.block_end)): b for b in scenario_blocks}
+
+        added = [b for k, b in scen_keys.items() if k not in base_keys]
+        removed = [b for k, b in base_keys.items() if k not in scen_keys]
+        retained_b = [b for k, b in scen_keys.items() if k in base_keys]
+
+        block_differences = {
+            "added_block_count": len(added),
+            "removed_block_count": len(removed),
+            "retained_block_count": len(retained_b),
+            "added_blocks": added,
+            "removed_blocks": removed,
+            "retained_blocks": retained_b,
+        }
+
+        return comparison_summary, task_impact, block_differences

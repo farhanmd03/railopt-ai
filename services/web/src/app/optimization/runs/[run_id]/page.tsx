@@ -221,6 +221,13 @@ export default function OptimizationRunPage({ params }: OptimizationRunPageProps
             <span>{runQuery.isFetching || blocksQuery.isFetching ? "Updating..." : "Refresh"}</span>
           </Button>
 
+          <Link href={`/optimization/runs/${encodeURIComponent(runIdParam)}/what-if`}>
+            <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs bg-card hover:bg-muted text-blue-700 border-blue-200">
+              <Sparkles className="h-3.5 w-3.5 text-blue-600" />
+              <span>What-If Scenario</span>
+            </Button>
+          </Link>
+
           <Link href="/optimization">
             <Button size="sm" className="h-8 gap-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white">
               <Sliders className="h-3.5 w-3.5" />
