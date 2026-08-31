@@ -1,156 +1,168 @@
+"use client";
+
 import React from "react";
-import { PageHeader } from "@/components/layout/page-header";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { SeverityBadge } from "@/components/status/severity-badge";
-import { FeasibilityBadge } from "@/components/status/feasibility-badge";
-import { SolverStatusBadge } from "@/components/status/solver-status-badge";
-import { ApprovalBadge } from "@/components/status/approval-badge";
-import { Activity, Cpu, Wrench, Calendar, ShieldCheck, CheckCircle2 } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "react-oidc-context";
+import { buildAuthUser } from "@/lib/auth-config";
+import { getMaintenanceTasks, getIntegrationOpportunities } from "@/lib/api/maintenance";
+import { getCandidateBlocks } from "@/lib/api/candidate-blocks";
+import { getOptimizationRuns, getOptimizedBlocks } from "@/lib/api/optimization";
+
+import { DashboardHeader } from "@/components/dashboard/dashboard-header";
+import { KpiOverview } from "@/components/dashboard/kpi-overview";
+import { PriorityDistribution } from "@/components/dashboard/priority-distribution";
+import { MaintenanceQueue } from "@/components/dashboard/maintenance-queue";
+import { IntegrationOpportunitiesSummary } from "@/components/dashboard/integration-opportunities-summary";
+import { CandidateBlocksSummary } from "@/components/dashboard/candidate-blocks-summary";
+import { LatestOptimizationRun } from "@/components/dashboard/latest-optimization-run";
+import { RecentOptimizedBlocks } from "@/components/dashboard/recent-optimized-blocks";
 
 export default function DashboardPage() {
+  const auth = useAuth();
+  const user = buildAuthUser(auth.user);
+  const queryClient = useQueryClient();
+
+  // 1. Maintenance tasks query (fetch full division task dataset to compute exact metrics)
+  const tasksQuery = useQuery({
+    queryKey: ["maintenance-tasks", "dashboard-summary"],
+    queryFn: () => getMaintenanceTasks({ page: 1, page_size: 100 }),
+  });
+
+  // 2. Integration opportunities query
+  const opportunitiesQuery = useQuery({
+    queryKey: ["integration-opportunities", "dashboard-summary"],
+    queryFn: () => getIntegrationOpportunities({ page: 1, page_size: 5 }),
+  });
+
+  // 3. Candidate blocks query
+  const candidateBlocksQuery = useQuery({
+    queryKey: ["candidate-blocks", "dashboard-summary"],
+    queryFn: () => getCandidateBlocks({ page: 1, page_size: 5 }),
+  });
+
+  // 4. Latest optimization run query
+  const latestRunQuery = useQuery({
+    queryKey: ["optimization-runs", "latest"],
+    queryFn: () => getOptimizationRuns({ page: 1, page_size: 1 }),
+  });
+
+  const latestRun = latestRunQuery.data?.items?.[0] || null;
+  const latestRunId = latestRun?.id;
+
+  // 5. Optimized blocks for latest run
+  const optimizedBlocksQuery = useQuery({
+    queryKey: ["optimized-blocks", "latest", latestRunId],
+    queryFn: () => getOptimizedBlocks(latestRunId!, { page: 1, page_size: 6 }),
+    enabled: !!latestRunId,
+  });
+
+  // Aggregated maintenance metrics computed deterministically from real API response
+  const allTasks = tasksQuery.data?.items || [];
+  const totalTasksCount = tasksQuery.data?.total || allTasks.length;
+  const criticalTasksCount = allTasks.filter((t) => t.severity === "Critical").length;
+  const highTasksCount = allTasks.filter((t) => t.severity === "High").length;
+  const topQueueTasks = allTasks.slice(0, 8);
+
+  const isRefreshing =
+    tasksQuery.isFetching ||
+    opportunitiesQuery.isFetching ||
+    candidateBlocksQuery.isFetching ||
+    latestRunQuery.isFetching ||
+    optimizedBlocksQuery.isFetching;
+
+  const handleRefresh = async () => {
+    await Promise.all([
+      tasksQuery.refetch(),
+      opportunitiesQuery.refetch(),
+      candidateBlocksQuery.refetch(),
+      latestRunQuery.refetch(),
+      latestRunId ? optimizedBlocksQuery.refetch() : Promise.resolve(),
+    ]);
+  };
+
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Operational Dashboard"
-        description="Unified railway maintenance planning and corridor optimization control center for Howrah Division (Eastern Railway)."
-        badge={
-          <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200 flex items-center gap-1">
-            <CheckCircle2 className="h-3 w-3" />
-            <span>OPERATIONAL</span>
-          </span>
-        }
+    <div className="space-y-6 max-w-7xl mx-auto">
+      {/* 1. Header & Context */}
+      <DashboardHeader
+        user={user}
+        latestRun={latestRun}
+        isRefreshing={isRefreshing}
+        onRefresh={handleRefresh}
       />
 
-      {/* Overview Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground uppercase">
-              Active Work Orders
-            </CardTitle>
-            <Wrench className="h-4 w-4 text-blue-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-foreground">53</div>
-            <p className="text-[11px] text-muted-foreground mt-1">
-              Engineering, S&T, and TRD
-            </p>
-          </CardContent>
-        </Card>
+      {/* 2. KPI Overview */}
+      <KpiOverview
+        totalTasks={totalTasksCount}
+        criticalTasks={criticalTasksCount}
+        highTasks={highTasksCount}
+        integrationOpportunities={opportunitiesQuery.data?.total}
+        candidateBlocks={candidateBlocksQuery.data?.total}
+        latestRun={latestRun}
+        isLoading={tasksQuery.isLoading && !tasksQuery.data}
+      />
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground uppercase">
-              Corridor Windows
-            </CardTitle>
-            <Calendar className="h-4 w-4 text-emerald-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-foreground">320</div>
-            <p className="text-[11px] text-muted-foreground mt-1">
-              Evaluated across 9 sections
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground uppercase">
-              Optimizer Status
-            </CardTitle>
-            <Cpu className="h-4 w-4 text-blue-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-2 mt-1">
-              <SolverStatusBadge status="OPTIMAL" />
-            </div>
-            <p className="text-[11px] text-muted-foreground mt-1">
-              CP-SAT solver initialized
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground uppercase">
-              Integrated Efficiency
-            </CardTitle>
-            <Activity className="h-4 w-4 text-indigo-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-foreground">78.9%</div>
-            <p className="text-[11px] text-muted-foreground mt-1">
-              15 cross-department blocks
-            </p>
-          </CardContent>
-        </Card>
+      {/* 3. Analytical Overview (2-Column Grid on desktop) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        <div className="lg:col-span-5">
+          <PriorityDistribution
+            tasks={allTasks}
+            isLoading={tasksQuery.isLoading && !tasksQuery.data}
+          />
+        </div>
+        <div className="lg:col-span-7">
+          <LatestOptimizationRun
+            latestRun={latestRun}
+            isLoading={latestRunQuery.isLoading && !latestRunQuery.data}
+            isError={latestRunQuery.isError}
+            errorMessage={latestRunQuery.error instanceof Error ? latestRunQuery.error.message : undefined}
+            onRetry={() => latestRunQuery.refetch()}
+          />
+        </div>
       </div>
 
-      {/* Railway Operations Design System Status Showcase */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4 text-blue-600" />
-            <span>Railway Operations Design System — Domain Status System</span>
-          </CardTitle>
-          <CardDescription>
-            High-contrast, accessible visual tokens for maintenance severity, feasibility, CP-SAT solver results, and possession approvals.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6 pt-2">
-          {/* Defect Severity */}
-          <div>
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2.5">
-              1. Defect Severity Bands
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <SeverityBadge severity="Critical" />
-              <SeverityBadge severity="High" />
-              <SeverityBadge severity="Medium" />
-              <SeverityBadge severity="Low" />
-            </div>
-          </div>
+      {/* 4. Operational Tables (Work Queue & Integration Opportunities) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <MaintenanceQueue
+          tasks={topQueueTasks}
+          totalTasks={totalTasksCount}
+          isLoading={tasksQuery.isLoading && !tasksQuery.data}
+          isError={tasksQuery.isError}
+          errorMessage={tasksQuery.error instanceof Error ? tasksQuery.error.message : undefined}
+          onRetry={() => tasksQuery.refetch()}
+        />
 
-          {/* Block Feasibility */}
-          <div>
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2.5">
-              2. Candidate Block Feasibility
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <FeasibilityBadge status="FEASIBLE" />
-              <FeasibilityBadge status="TRAIN_CONFLICT" />
-              <FeasibilityBadge status="DURATION_INSUFFICIENT" />
-              <FeasibilityBadge status="BLOCKED" />
-            </div>
-          </div>
+        <IntegrationOpportunitiesSummary
+          opportunities={opportunitiesQuery.data?.items}
+          totalOpportunities={opportunitiesQuery.data?.total}
+          isLoading={opportunitiesQuery.isLoading && !opportunitiesQuery.data}
+          isError={opportunitiesQuery.isError}
+          errorMessage={opportunitiesQuery.error instanceof Error ? opportunitiesQuery.error.message : undefined}
+          onRetry={() => opportunitiesQuery.refetch()}
+        />
+      </div>
 
-          {/* Solver Status */}
-          <div>
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2.5">
-              3. CP-SAT Solver Status (Mathematical Formulation)
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <SolverStatusBadge status="OPTIMAL" />
-              <SolverStatusBadge status="FEASIBLE" />
-              <SolverStatusBadge status="INFEASIBLE" />
-              <SolverStatusBadge status="UNKNOWN" />
-            </div>
-          </div>
+      {/* 5. Candidate Blocks Summary */}
+      <CandidateBlocksSummary
+        candidateBlocks={candidateBlocksQuery.data?.items}
+        totalCandidates={candidateBlocksQuery.data?.total}
+        isLoading={candidateBlocksQuery.isLoading && !candidateBlocksQuery.data}
+        isError={candidateBlocksQuery.isError}
+        errorMessage={candidateBlocksQuery.error instanceof Error ? candidateBlocksQuery.error.message : undefined}
+        onRetry={() => candidateBlocksQuery.refetch()}
+      />
 
-          {/* Approval State Separation */}
-          <div>
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2.5">
-              4. Possession Approval Lifecycle (Human Authority)
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <ApprovalBadge status="Candidate" />
-              <ApprovalBadge status="Approved" />
-              <ApprovalBadge status="Pending" />
-              <ApprovalBadge status="Rejected" />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {/* 6. Recent Optimized Blocks (if latest run exists or attempted) */}
+      {latestRun && (
+        <RecentOptimizedBlocks
+          blocks={optimizedBlocksQuery.data?.items}
+          totalBlocks={optimizedBlocksQuery.data?.total}
+          runId={latestRunId}
+          isLoading={optimizedBlocksQuery.isLoading && !optimizedBlocksQuery.data}
+          isError={optimizedBlocksQuery.isError}
+          errorMessage={optimizedBlocksQuery.error instanceof Error ? optimizedBlocksQuery.error.message : undefined}
+          onRetry={() => optimizedBlocksQuery.refetch()}
+        />
+      )}
     </div>
   );
 }

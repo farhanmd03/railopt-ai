@@ -33,9 +33,10 @@ keycloak_data/
 *.bin
 models/
 
-# Temporary
+# Temporary & Local files
 tmp/
 temp/
+.local/
 
 # OS
 .DS_Store

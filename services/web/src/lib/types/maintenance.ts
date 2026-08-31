@@ -36,12 +36,30 @@ export interface PriorityAssessment {
   reasons: string[];
 }
 
+export interface OpportunityPrioritySummary {
+  highest_task_priority: number;
+  average_task_priority: number;
+  total_priority_value: number;
+}
+
 export interface IntegrationOpportunity {
   opportunity_id: string;
   section_id: string;
-  primary_task_id: string;
-  compatible_task_ids: string[];
+  task_ids: string[];
   departments_involved: string[];
+  is_cross_department: boolean;
+  compatibility_status: "COMPATIBLE" | "PARTIALLY_COMPATIBLE" | "INCOMPATIBLE" | string;
   compatibility_score: number;
-  reasons: string[];
+  combined_duration_hrs: number;
+  priority_summary: OpportunityPrioritySummary;
+  compatibility_reasons: string[];
+  spatial_compatibility?: string;
+  temporal_compatibility?: string;
+  duration_compatibility?: string;
+  resource_compatibility?: string;
+  advisory_note?: string;
+  // Legacy aliases
+  primary_task_id?: string;
+  compatible_task_ids?: string[];
+  reasons?: string[];
 }
