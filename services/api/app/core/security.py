@@ -90,6 +90,7 @@ class KeycloakTokenVerifier:
                 signing_key.key,
                 algorithms=["RS256"],
                 issuer=issuer,
+                leeway=10,
                 options={
                     "verify_signature": True,
                     "verify_exp": True,

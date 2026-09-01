@@ -67,8 +67,16 @@ export function ExplanationDrawer({
                 <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
                   <span className="flex items-center gap-1 font-mono">
                     <Cpu className="h-3.5 w-3.5 text-blue-600" />
-                    {explanation?.model_name || "Local Ollama"}
+                    {explanation?.model_name || "Explainability Engine"}
                   </span>
+                  {explanation?.provider && (
+                    <>
+                      <span>•</span>
+                      <span className="uppercase text-[10px] font-bold px-1.5 py-0.2 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
+                        {explanation.provider}
+                      </span>
+                    </>
+                  )}
                   <span>•</span>
                   <span>Grounded in CP-SAT Outputs</span>
                 </div>
@@ -90,7 +98,7 @@ export function ExplanationDrawer({
               <ShieldAlert className="h-4 w-4 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />
               <p className="leading-relaxed font-medium">
                 {explanation?.disclaimer ||
-                  "AI-generated explanation based on deterministic system outputs. The explanation does not make scheduling, safety, or approval decisions."}
+                  "AI-generated advisory narrative based on deterministic system outputs. The explanation does not make scheduling, safety, or approval decisions."}
               </p>
             </div>
 
@@ -100,7 +108,7 @@ export function ExplanationDrawer({
                 <Loader2 className="h-8 w-8 animate-spin text-blue-600 mx-auto" />
                 <div className="space-y-1">
                   <h4 className="text-sm font-semibold text-foreground">
-                    Consulting Local Ollama Model...
+                    Synthesizing Operational Explanation...
                   </h4>
                   <p className="text-xs text-muted-foreground max-w-sm mx-auto">
                     Synthesizing verified solver metrics into a structured natural-language operational explanation.
@@ -117,7 +125,7 @@ export function ExplanationDrawer({
                 </div>
                 <div className="space-y-1">
                   <h4 className="text-sm font-bold text-destructive">
-                    Local Explanation Service Unavailable
+                    Explanation Service Unavailable
                   </h4>
                   <p className="text-xs text-muted-foreground max-w-md mx-auto">
                     {error}

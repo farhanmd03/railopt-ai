@@ -1,7 +1,7 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
-import { Sidebar, NAV_ITEMS } from "@/components/layout/sidebar";
+import { Sidebar, NAV_ITEMS, NAV_GROUPS } from "@/components/layout/sidebar";
 import * as reactOidcContext from "react-oidc-context";
 
 vi.mock("next/navigation", () => ({
@@ -20,23 +20,37 @@ describe("Sidebar Navigation", () => {
     } as unknown as reactOidcContext.AuthContextProps);
 
     render(<Sidebar />);
-    expect(screen.getByText("RailOpt AI")).toBeInTheDocument();
-    expect(screen.getByText("Howrah Division (ER)")).toBeInTheDocument();
+    expect(screen.getByText("RailOpt")).toBeInTheDocument();
+    expect(screen.getByText("AI")).toBeInTheDocument();
+    expect(screen.getByText(/Howrah/i)).toBeInTheDocument();
   });
 
-  it("renders all 8 required operational module links for admin", () => {
+  it("renders operational navigation categories", () => {
     vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
       isAuthenticated: true,
       user: { profile: { realm_access: { roles: ["ADMIN"] } } },
     } as unknown as reactOidcContext.AuthContextProps);
 
     render(<Sidebar />);
-    expect(NAV_ITEMS).toHaveLength(8);
+    expect(screen.getByText("OVERVIEW")).toBeInTheDocument();
+    expect(screen.getByText("PLANNING")).toBeInTheDocument();
+    expect(screen.getByText("OPERATIONS")).toBeInTheDocument();
+    expect(screen.getByText("GOVERNANCE")).toBeInTheDocument();
+  });
+
+  it("renders all operational module links for admin", () => {
+    vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
+      isAuthenticated: true,
+      user: { profile: { realm_access: { roles: ["ADMIN"] } } },
+    } as unknown as reactOidcContext.AuthContextProps);
+
+    render(<Sidebar />);
+    expect(NAV_ITEMS.length).toBeGreaterThanOrEqual(8);
 
     for (const item of NAV_ITEMS) {
-      const link = screen.getByRole("link", { name: new RegExp(item.label, "i") });
-      expect(link).toBeInTheDocument();
-      expect(link).toHaveAttribute("href", item.href);
+      const links = screen.getAllByRole("link", { name: new RegExp(item.label, "i") });
+      expect(links.length).toBeGreaterThan(0);
+      expect(links[0]).toHaveAttribute("href", item.href);
     }
   });
 

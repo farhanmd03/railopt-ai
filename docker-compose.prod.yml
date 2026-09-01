@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgis/postgis:17-3.5
+    container_name: railopt-postgres-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-railopt}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-railopt_password_2026}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-railopt}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - railopt-net
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    container_name: railopt-keycloak-prod
+    restart: unless-stopped
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_dev_password}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config/keycloak:/opt/keycloak/data/import
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - railopt-net
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: railopt-ollama-prod
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_prod_data:/root/.ollama
+    networks:
+      - railopt-net
+
+  api:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    container_name: railopt-api-prod
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-railopt_password_2026}@postgres:5432/${POSTGRES_DB:-railopt}
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: railopt
+      KEYCLOAK_CLIENT_ID: railopt-web
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: gemma2:2b
+      ENVIRONMENT: production
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    networks:
+      - railopt-net
+
+  web:
+    build:
+      context: ./services/web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+        NEXT_PUBLIC_KEYCLOAK_URL: http://localhost:8080
+        NEXT_PUBLIC_KEYCLOAK_REALM: railopt
+        NEXT_PUBLIC_KEYCLOAK_CLIENT_ID: railopt-web
+    container_name: railopt-web-prod
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    networks:
+      - railopt-net
+
+volumes:
+  postgres_prod_data:
+  ollama_prod_data:
+
+networks:
+  railopt-net:
+    driver: bridge

@@ -1,5 +1,5 @@
 /**
- * TypeScript types for Ollama-Powered Explainability Layer (Batch 7L).
+ * TypeScript types for Explainability Layer with Multi-Provider Support (Ollama / Gemini / Deterministic).
  */
 
 export type ExplanationType =
@@ -21,6 +21,9 @@ export interface ExplanationHealthResponse {
   base_url: string;
   model: string;
   message: string;
+  active_provider?: string;
+  ollama_available?: boolean;
+  gemini_configured?: boolean;
 }
 
 export interface ExplanationResponse {
@@ -31,6 +34,7 @@ export interface ExplanationResponse {
   confidence_note: string;
   deterministic_facts: Record<string, unknown>;
   model_name: string;
+  provider?: string;
   disclaimer: string;
   generated_at: string;
 }

@@ -39,11 +39,14 @@ class ExplanationRequest(BaseModel):
 
 
 class ExplanationHealthResponse(BaseModel):
-    """Health and status of local Ollama explanation engine."""
+    """Health and status of explainability providers."""
     available: bool
     base_url: str
     model: str
     message: str
+    active_provider: Optional[str] = "ollama"
+    ollama_available: bool = False
+    gemini_configured: bool = False
 
 
 class ExplanationResponse(BaseModel):
@@ -65,9 +68,10 @@ class ExplanationResponse(BaseModel):
         default_factory=dict,
         description="Authoritative underlying facts used as evidence"
     )
-    model_name: str = Field(..., description="Ollama model used for explanation")
+    model_name: str = Field(..., description="LLM model or engine used for explanation")
+    provider: str = Field("ollama", description="Provider used: ollama | gemini | deterministic")
     disclaimer: str = Field(
-        "AI-generated explanation based on deterministic system outputs. "
+        "AI-generated advisory narrative based on deterministic system outputs. "
         "The explanation does not make scheduling, safety, or approval decisions.",
         description="Mandatory advisory disclaimer"
     )

@@ -58,8 +58,12 @@ CLIENT_ID = "railopt-web"
 DEMO_PASSWORD = os.getenv("DEMO_USER_PASSWORD", "railopt_demo_2026")
 
 
+_TOKEN_CACHE: dict[str, str] = {}
+
 def obtain_demo_token(username: str = "engineering.demo") -> str:
-    """Acquire real JWT access token from Keycloak for testing."""
+    """Acquire real JWT access token from Keycloak for testing with caching."""
+    if username in _TOKEN_CACHE:
+        return _TOKEN_CACHE[username]
     url = f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/token"
     data = urllib.parse.urlencode({
         "client_id": CLIENT_ID,
@@ -77,7 +81,9 @@ def obtain_demo_token(username: str = "engineering.demo") -> str:
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
         res = json.loads(resp.read().decode("utf-8"))
-        return res["access_token"]
+        token = res["access_token"]
+        _TOKEN_CACHE[username] = token
+        return token
 
 
 async def asgi_request(

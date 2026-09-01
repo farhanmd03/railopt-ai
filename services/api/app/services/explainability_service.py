@@ -1,21 +1,24 @@
-"""Explainability Service (Batch 7L).
+"""Explainability Service (Batch 7L + 7O LLM Provider Abstraction).
 
-Provides grounded, local Ollama-powered explanations for optimization runs,
+Provides grounded natural language explanations for optimization runs,
 corridor possession blocks, unassigned work orders, and what-if scenarios.
 
-All explanations are strictly bounded to verified deterministic facts from the
-database. Ollama is an explanation assistant only with zero decision authority.
+Architecture:
+- LLM Provider Router:
+  1. Ollama (Local zero-cost LLM runtime)
+  2. Gemini (Hosted Google Gemini API fallback)
+  3. Deterministic (100% offline rule-based fallback)
+- All explanations are strictly bounded to verified deterministic facts.
+- Zero decision authority: LLMs function solely as advisory translation layers.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-import httpx
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,10 +33,16 @@ from app.schemas.explanation import (
     ExplanationResponse,
     ExplanationType,
 )
+from app.services.llm_providers import (
+    DeterministicProvider,
+    GeminiProvider,
+    OllamaProvider,
+    sanitize_untrusted_data,
+)
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are an explanation assistant for RailOpt AI, an intelligent railway maintenance optimization platform.
+SYSTEM_PROMPT = """You are an advisory explanation assistant for RailOpt AI, an intelligent railway maintenance optimization platform.
 
 STRICT OPERATIONAL RULES:
 1. You are NOT the optimizer. The optimization is computed deterministically by Google OR-Tools CP-SAT.
@@ -53,43 +62,46 @@ STRICT OPERATIONAL RULES:
 
 
 class ExplainabilityService:
-    """Service for assembling deterministic facts and generating Ollama explanations."""
+    """Service for assembling deterministic facts and routing to active LLM providers."""
 
     def __init__(
         self,
-        base_url: Optional[str] = None,
-        model: Optional[str] = None,
-        timeout_seconds: Optional[float] = None,
+        ollama_provider: Optional[OllamaProvider] = None,
+        gemini_provider: Optional[GeminiProvider] = None,
+        deterministic_provider: Optional[DeterministicProvider] = None,
+        provider_mode: Optional[str] = None,
     ):
-        self.base_url = (base_url or settings.ollama_base_url).rstrip("/")
-        self.model = model or settings.ollama_model
-        self.timeout_seconds = timeout_seconds or getattr(settings, "ollama_timeout_seconds", 25.0)
+        self.provider_mode = (provider_mode or getattr(settings, "llm_provider", "auto")).lower()
+        self.ollama = ollama_provider or OllamaProvider()
+        self.gemini = gemini_provider or GeminiProvider()
+        self.deterministic = deterministic_provider or DeterministicProvider()
 
     async def check_health(self) -> ExplanationHealthResponse:
-        """Check if local Ollama server is responsive and model is available."""
-        try:
-            async with httpx.AsyncClient(timeout=3.0) as client:
-                resp = await client.get(f"{self.base_url}/api/tags")
-                if resp.status_code == 200:
-                    data = resp.json()
-                    models = [m.get("name") for m in data.get("models", [])]
-                    model_found = any(self.model in m for m in models) if models else True
-                    return ExplanationHealthResponse(
-                        available=True,
-                        base_url=self.base_url,
-                        model=self.model,
-                        message=f"Local Ollama is online. Model '{self.model}' is ready."
-                        if model_found
-                        else f"Local Ollama is online, but model '{self.model}' may need to be pulled.",
-                    )
-        except Exception as e:
-            logger.warning(f"Ollama health check failed: {e}")
+        """Check availability of explainability providers."""
+        ollama_ok = await self.ollama.check_health() if getattr(settings, "ollama_enabled", True) else False
+        gemini_ok = await self.gemini.check_health() if getattr(settings, "gemini_enabled", True) else False
+
+        active_provider = self.provider_mode
+        if self.provider_mode == "auto":
+            if ollama_ok:
+                active_provider = "ollama"
+            elif gemini_ok:
+                active_provider = "gemini"
+            else:
+                active_provider = "deterministic"
+
+        is_available = ollama_ok or gemini_ok or (self.provider_mode == "deterministic")
 
         return ExplanationHealthResponse(
-            available=False,
-            base_url=self.base_url,
-            model=self.model,
-            message=f"Local Ollama service is unavailable at {self.base_url}.",
+            available=is_available,
+            base_url=self.ollama.base_url,
+            model=self.ollama.model_name if active_provider == "ollama" else (
+                self.gemini.model_name if active_provider == "gemini" else "deterministic-rule-engine"
+            ),
+            message=f"Explainability router online (Active provider: {active_provider}).",
+            active_provider=active_provider,
+            ollama_available=ollama_ok,
+            gemini_configured=gemini_ok,
         )
 
     async def generate_explanation(
@@ -97,26 +109,29 @@ class ExplainabilityService:
         request: ExplanationRequest,
         db: AsyncSession,
     ) -> ExplanationResponse:
-        """Gather verified facts and generate a grounded explanation using Ollama."""
-        # 1. Assemble verified deterministic facts
+        """Gather verified facts and route to available LLM provider with fallback."""
+        # 1. Assemble verified deterministic facts from database
         facts, prompt_context = await self._assemble_facts_and_context(request, db)
 
-        # 2. Build secure prompt with XML boundaries
-        full_prompt = (
-            f"{SYSTEM_PROMPT}\n\n"
+        # 2. Build secure prompt with sanitized XML data boundaries
+        sanitized_context = sanitize_untrusted_data(prompt_context)
+        user_prompt = (
             f"<UNTRUSTED_SYSTEM_DATA>\n"
             f"EXPLANATION TYPE: {request.explanation_type.value}\n"
-            f"{prompt_context}\n"
+            f"{sanitized_context}\n"
             f"</UNTRUSTED_SYSTEM_DATA>\n\n"
             f"Based strictly on the data above, output the required JSON explanation object now:"
         )
 
-        # 3. Call local Ollama
-        raw_response = await self._call_ollama(full_prompt)
+        # 3. Route through provider fallback hierarchy
+        parsed_data, used_model, used_provider = await self._route_provider_generation(
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            facts=facts,
+            exp_type=request.explanation_type,
+        )
 
-        # 4. Parse & sanitize JSON output
-        parsed_data = self._parse_model_output(raw_response, facts, request.explanation_type)
-
+        # 4. Return structured, verified explanation response
         return ExplanationResponse(
             explanation_type=request.explanation_type,
             summary=parsed_data["summary"],
@@ -124,9 +139,72 @@ class ExplainabilityService:
             limitations=parsed_data["limitations"],
             confidence_note=parsed_data["confidence_note"],
             deterministic_facts=facts,
-            model_name=self.model,
+            model_name=used_model,
+            provider=used_provider,
             generated_at=datetime.now(timezone.utc).isoformat(),
         )
+
+    async def _route_provider_generation(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        facts: Dict[str, Any],
+        exp_type: ExplanationType,
+    ) -> Tuple[Dict[str, Any], str, str]:
+        """Execute provider routing policy: auto | ollama | gemini | deterministic."""
+        mode = self.provider_mode
+
+        # Case 1: Explicit Deterministic Mode
+        if mode == "deterministic":
+            logger.info("Using deterministic rule-based explainability provider.")
+            res = await self.deterministic.generate(system_prompt, user_prompt, facts, exp_type)
+            return res, self.deterministic.model_name, "deterministic"
+
+        # Case 2: Explicit Gemini Mode
+        if mode == "gemini":
+            try:
+                logger.info(f"Calling Gemini provider (model={self.gemini.model_name})...")
+                res = await self.gemini.generate(system_prompt, user_prompt, facts, exp_type)
+                return res, self.gemini.model_name, "gemini"
+            except Exception as e:
+                logger.warning(f"Gemini provider failed, falling back to deterministic explanation: {e}")
+                res = await self.deterministic.generate(system_prompt, user_prompt, facts, exp_type)
+                return res, self.deterministic.model_name, "deterministic"
+
+        # Case 3: Explicit Ollama Mode
+        if mode == "ollama":
+            try:
+                logger.info(f"Calling Ollama provider (model={self.ollama.model_name})...")
+                res = await self.ollama.generate(system_prompt, user_prompt, facts, exp_type)
+                return res, self.ollama.model_name, "ollama"
+            except Exception as e:
+                logger.warning(f"Ollama provider failed, falling back to deterministic explanation: {e}")
+                res = await self.deterministic.generate(system_prompt, user_prompt, facts, exp_type)
+                return res, self.deterministic.model_name, "deterministic"
+
+        # Case 4: Default 'auto' Mode (Ollama -> Gemini -> Deterministic)
+        # Step 4a: Try Ollama first
+        if getattr(settings, "ollama_enabled", True):
+            try:
+                logger.info(f"Auto-routing: Attempting local Ollama ({self.ollama.model_name})...")
+                res = await self.ollama.generate(system_prompt, user_prompt, facts, exp_type)
+                return res, self.ollama.model_name, "ollama"
+            except Exception as e:
+                logger.info(f"Ollama provider unavailable ({e}). Falling back to Gemini...")
+
+        # Step 4b: Fallback to Gemini if configured
+        if getattr(settings, "gemini_enabled", True) and getattr(settings, "gemini_api_key", None):
+            try:
+                logger.info(f"Auto-routing: Attempting hosted Gemini ({self.gemini.model_name})...")
+                res = await self.gemini.generate(system_prompt, user_prompt, facts, exp_type)
+                return res, self.gemini.model_name, "gemini"
+            except Exception as e:
+                logger.warning(f"Gemini fallback failed ({e}). Falling back to deterministic explanation...")
+
+        # Step 4c: Ultimate zero-network deterministic fallback
+        logger.info("Auto-routing: Using deterministic rule-based explainability fallback.")
+        res = await self.deterministic.generate(system_prompt, user_prompt, facts, exp_type)
+        return res, self.deterministic.model_name, "deterministic"
 
     async def _assemble_facts_and_context(
         self,
@@ -229,7 +307,6 @@ class ExplainabilityService:
         block_id: int,
         db: AsyncSession,
     ) -> Tuple[Dict[str, Any], str]:
-        # Fetch block
         stmt = (
             select(OptimizedBlock)
             .where(OptimizedBlock.id == block_id, OptimizedBlock.optimization_run_id == run.id)
@@ -241,7 +318,6 @@ class ExplainabilityService:
                 detail=f"Optimized block #{block_id} was not found in Run #{run.id}.",
             )
 
-        # Fetch assigned tasks
         task_stmt = (
             select(OptimizedBlockTask.task_id)
             .where(OptimizedBlockTask.optimized_block_id == block.id)
@@ -320,7 +396,6 @@ class ExplainabilityService:
         task_id: str,
         db: AsyncSession,
     ) -> Tuple[Dict[str, Any], str]:
-        # Fetch task details
         stmt = select(MaintenanceTask).where(MaintenanceTask.task_id == task_id)
         task = (await db.scalars(stmt)).first()
         if not task:
@@ -329,7 +404,6 @@ class ExplainabilityService:
                 detail=f"Maintenance Task '{task_id}' not found in database.",
             )
 
-        # Check if task was indeed unassigned in this run
         params = json.loads(run.parameters) if run.parameters else {}
         metrics = params.get("metrics", {})
         unassigned_ids = metrics.get("unassigned_task_ids", [])
@@ -372,7 +446,6 @@ class ExplainabilityService:
         scenario_id: str,
         db: AsyncSession,
     ) -> Tuple[Dict[str, Any], str]:
-        # Fetch scenario record
         stmt = (
             select(OptimizationScenario)
             .where(
@@ -421,131 +494,3 @@ class ExplainabilityService:
             f"Deterministic Summary: {comp_dict.get('explanation')}",
         ]
         return facts, "\n".join(context_lines)
-
-    async def _call_ollama(self, prompt: str) -> str:
-        """Call local Ollama generate API asynchronously with strict timeout handling."""
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": False,
-            "format": "json",
-            "options": {
-                "temperature": 0.2,
-                "top_p": 0.9,
-                "num_predict": 300,
-            },
-        }
-
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                resp = await client.post(f"{self.base_url}/api/generate", json=payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    return data.get("response", "")
-                else:
-                    logger.error(f"Ollama API returned HTTP {resp.status_code}: {resp.text}")
-                    raise HTTPException(
-                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail=f"Local Ollama returned HTTP {resp.status_code}. Ensure model '{self.model}' is installed.",
-                    )
-        except httpx.TimeoutException:
-            logger.error(f"Ollama request timed out after {self.timeout_seconds}s")
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail=f"Local Ollama explanation timed out after {self.timeout_seconds} seconds. Please try again.",
-            )
-        except httpx.ConnectError:
-            logger.error(f"Cannot connect to local Ollama at {self.base_url}")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Local explanation service unavailable. Please check that Ollama is running at {self.base_url}.",
-            )
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error calling Ollama: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to communicate with local explanation service: {str(e)}",
-            )
-
-    def _parse_model_output(
-        self,
-        raw_output: str,
-        facts: Dict[str, Any],
-        exp_type: ExplanationType,
-    ) -> Dict[str, Any]:
-        """Safely parse and sanitize JSON output from Ollama."""
-        cleaned = raw_output.strip()
-        # Remove any surrounding markdown code blocks ```json ... ```
-        cleaned = re.sub(r"^```json\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-
-        try:
-            parsed = json.loads(cleaned)
-            summary = str(parsed.get("summary", "")).strip()
-            key_factors = parsed.get("key_factors", [])
-            if not isinstance(key_factors, list):
-                key_factors = [str(key_factors)]
-            key_factors = [str(k).strip() for k in key_factors if str(k).strip()]
-
-            limitations = parsed.get("limitations", [])
-            if not isinstance(limitations, list):
-                limitations = [str(limitations)]
-            limitations = [str(l).strip() for l in limitations if str(l).strip()]
-
-            confidence_note = str(
-                parsed.get(
-                    "confidence_note",
-                    "Explanation derived strictly from deterministic solver outputs without operational authority.",
-                )
-            ).strip()
-
-            if not summary:
-                summary = self._fallback_summary(facts, exp_type)
-
-            return {
-                "summary": summary,
-                "key_factors": key_factors or ["Solver evaluated multi-attribute objective criteria."],
-                "limitations": limitations or ["Explanation is informational; human operational review is required."],
-                "confidence_note": confidence_note,
-            }
-        except Exception as e:
-            logger.warning(f"Failed to parse Ollama JSON response: {e}. Output was: {raw_output[:200]}")
-            return {
-                "summary": self._fallback_summary(facts, exp_type),
-                "key_factors": [
-                    "Optimal mathematical scheduling by Google OR-Tools CP-SAT.",
-                    "Multi-department task grouping based on spatial track section proximity.",
-                ],
-                "limitations": [
-                    "AI explanation service returned unstructured output; deterministic summary provided.",
-                ],
-                "confidence_note": "Explanation derived strictly from deterministic solver outputs.",
-            }
-
-    def _fallback_summary(self, facts: Dict[str, Any], exp_type: ExplanationType) -> str:
-        """Deterministic factual fallback summary when model output is unparseable."""
-        if exp_type == ExplanationType.RUN_SUMMARY:
-            return (
-                f"Optimization run #{facts.get('run_id')} achieved a solver status of {facts.get('solver_status')}, "
-                f"scheduling {facts.get('tasks_scheduled')} tasks across {facts.get('total_blocks')} possession blocks "
-                f"with an objective value of {facts.get('objective_value')}."
-            )
-        elif exp_type == ExplanationType.BLOCK_EXPLANATION:
-            return (
-                f"Block #{facts.get('block_id')} on section {facts.get('section_id')} was scheduled for "
-                f"{facts.get('block_duration_hrs')} hours with a realized priority value of {facts.get('realized_priority_value')}, "
-                f"assigning {facts.get('assigned_task_count')} maintenance work orders."
-            )
-        elif exp_type == ExplanationType.UNASSIGNED_TASK:
-            return (
-                f"Task {facts.get('task_id')} on section {facts.get('section_id')} ({facts.get('department')}) "
-                f"with priority {facts.get('priority_score')} was not assigned to a possession window during this run."
-            )
-        elif exp_type == ExplanationType.SCENARIO_COMPARISON:
-            return (
-                f"Scenario '{facts.get('scenario_name')}' altered planning parameters relative to base run #{facts.get('base_run_id')}, "
-                f"re-optimizing task allocations and block distributions."
-            )
-        return "Deterministic optimization result."

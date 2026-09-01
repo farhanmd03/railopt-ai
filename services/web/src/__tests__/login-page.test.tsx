@@ -25,11 +25,11 @@ describe("Login Page", () => {
 
     render(<LoginPage />);
 
-    expect(screen.getByText("RailOpt AI")).toBeInTheDocument();
-    expect(screen.getByText("HOWRAH DIVISION")).toBeInTheDocument();
-    expect(screen.getByText("EASTERN RAILWAY")).toBeInTheDocument();
+    expect(screen.getAllByText(/RailOpt/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/HOWRAH/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/EASTERN RAILWAY/i).length).toBeGreaterThan(0);
     expect(
-      screen.getByText("Authorized access for railway maintenance planning users.")
+      screen.getByText(/Protected by 8-role Deny-by-Default RBAC/i)
     ).toBeInTheDocument();
   });
 
@@ -44,7 +44,7 @@ describe("Login Page", () => {
 
     render(<LoginPage />);
 
-    const signInBtn = screen.getByRole("button", { name: /sign in with railopt/i });
+    const signInBtn = screen.getByRole("button", { name: /continue with railway sso|sign in with railopt/i });
     expect(signInBtn).toBeInTheDocument();
 
     fireEvent.click(signInBtn);

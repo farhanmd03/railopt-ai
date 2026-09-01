@@ -33,7 +33,7 @@ describe("Header Authentication & User Display", () => {
     expect(screen.getByText("PLANNER")).toBeInTheDocument();
   });
 
-  it("opens user menu and executes signout on Sign out click", () => {
+  it("opens user menu, opens confirmation dialog, and executes signout on confirm", () => {
     const mockSignoutRedirect = vi.fn().mockResolvedValue(undefined);
     vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
       isAuthenticated: true,
@@ -59,12 +59,54 @@ describe("Header Authentication & User Display", () => {
     const profileBtn = screen.getByRole("button", { name: /planner demo/i });
     fireEvent.click(profileBtn);
 
-    // Sign out button should appear
-    const signOutBtn = screen.getByRole("button", { name: /sign out of railopt/i });
-    expect(signOutBtn).toBeInTheDocument();
+    // Sign out menu item should appear
+    const signOutMenuItem = screen.getByRole("button", { name: /sign out of railopt/i });
+    expect(signOutMenuItem).toBeInTheDocument();
 
-    fireEvent.click(signOutBtn);
+    // Clicking menu item opens confirmation dialog without immediate logout
+    fireEvent.click(signOutMenuItem);
+    expect(screen.getByText("Sign out of RailOpt AI?")).toBeInTheDocument();
+    expect(mockSignoutRedirect).not.toHaveBeenCalled();
+
+    // Confirm signout in modal
+    const confirmBtn = screen.getByRole("button", { name: /^sign out$/i });
+    fireEvent.click(confirmBtn);
     expect(mockSignoutRedirect).toHaveBeenCalledTimes(1);
+  });
+
+  it("dismisses logout dialog without signout when Cancel is clicked", () => {
+    const mockSignoutRedirect = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
+      isAuthenticated: true,
+      user: {
+        profile: {
+          sub: "user-1",
+          preferred_username: "planner.demo",
+          given_name: "Planner",
+          family_name: "Demo",
+          email: "planner.demo@railopt.local",
+          realm_access: {
+            roles: ["PLANNER"],
+          },
+        },
+      },
+      signoutRedirect: mockSignoutRedirect,
+      removeUser: vi.fn(),
+    } as unknown as reactOidcContext.AuthContextProps);
+
+    render(<Header />);
+
+    const profileBtn = screen.getByRole("button", { name: /planner demo/i });
+    fireEvent.click(profileBtn);
+
+    const signOutMenuItem = screen.getByRole("button", { name: /sign out of railopt/i });
+    fireEvent.click(signOutMenuItem);
+
+    const cancelBtn = screen.getByRole("button", { name: /cancel/i });
+    fireEvent.click(cancelBtn);
+
+    expect(screen.queryByText("Sign out of RailOpt AI?")).not.toBeInTheDocument();
+    expect(mockSignoutRedirect).not.toHaveBeenCalled();
   });
 
   it("does NOT display VIEWER when user has no roles assigned", () => {

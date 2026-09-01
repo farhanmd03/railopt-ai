@@ -101,7 +101,7 @@ describe("Ollama-Powered Explainability Layer UI", () => {
     fireEvent.click(screen.getByRole("button", { name: /Explain Block/i }));
 
     expect(
-      await screen.findByRole("heading", { name: /Local Explanation Service Unavailable/i })
+      await screen.findByRole("heading", { name: /Explanation Service Unavailable/i })
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Retry Explanation/i })

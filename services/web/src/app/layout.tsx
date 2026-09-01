@@ -4,9 +4,15 @@ import { AppShell } from "@/components/layout/app-shell";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "RailOpt AI — Howrah Division Railway Maintenance Planning",
+  title: {
+    default: "RailOpt AI — Howrah Division Railway Possession Planning",
+    template: "%s | RailOpt AI",
+  },
   description:
-    "AI-Powered Multi-Department Railway Maintenance Block Planning & Optimization (SIH26027)",
+    "AI-Powered Multi-Department Railway Maintenance Block Planning & Optimization Platform — Ministry of Railways / Eastern Railway (Howrah Division)",
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({
