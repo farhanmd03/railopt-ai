@@ -74,6 +74,45 @@ class TestEnvironmentConfigLoading(unittest.TestCase):
         self.assertTrue(custom_settings.demo_access_enabled)
         self.assertEqual(custom_settings.demo_user_password, "custom_demo_password")
 
+    def test_07_database_url_normalization(self):
+        """7. Plain postgresql:// or postgres:// URLs normalize to postgresql+psycopg://."""
+        from app.core.database import normalize_database_url
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        test_cases = [
+            (
+                "postgresql://postgres.xxx:yyy@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
+                "postgresql+psycopg://postgres.xxx:yyy@aws-0-ap-south-1.pooler.supabase.com:5432/postgres",
+            ),
+            (
+                "postgres://user:pass@render-postgres:5432/railopt",
+                "postgresql+psycopg://user:pass@render-postgres:5432/railopt",
+            ),
+            (
+                "postgresql+psycopg://user:pass@localhost:5432/railopt",
+                "postgresql+psycopg://user:pass@localhost:5432/railopt",
+            ),
+            (
+                "postgresql+asyncpg://user:pass@localhost:5432/railopt",
+                "postgresql+asyncpg://user:pass@localhost:5432/railopt",
+            ),
+        ]
+
+        for raw_url, expected in test_cases:
+            normalized = normalize_database_url(raw_url)
+            self.assertEqual(normalized, expected)
+
+            # Test Settings normalization
+            s = Settings(database_url=raw_url)
+            self.assertEqual(s.database_url, expected)
+
+        # Confirm create_async_engine instantiates with psycopg without psycopg2
+        supabase_url = "postgresql://user:pass@pooler.supabase.com:5432/postgres"
+        norm_url = normalize_database_url(supabase_url)
+        engine = create_async_engine(norm_url)
+        self.assertEqual(engine.dialect.name, "postgresql")
+        self.assertEqual(engine.dialect.driver, "psycopg")
+
 
 if __name__ == "__main__":
     unittest.main()

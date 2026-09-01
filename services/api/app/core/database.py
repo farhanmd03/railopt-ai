@@ -24,8 +24,26 @@ from sqlalchemy.ext.asyncio import (
 
 from app.core.config import settings
 
+
+def normalize_database_url(url: str) -> str:
+    """Normalize PostgreSQL connection string for SQLAlchemy async engine.
+
+    Ensures plain 'postgresql://' or 'postgres://' connection strings from cloud hosts
+    (e.g., Supabase Session Pooler on port 5432, Render, RDS) route to the installed
+    psycopg v3 async driver ('postgresql+psycopg://'), preventing SQLAlchemy from
+    attempting to load missing 'psycopg2'.
+    """
+    if not url:
+        return url
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg://" + url[len("postgres://"):]
+    if url.startswith("postgresql://") and not url.startswith("postgresql+"):
+        return "postgresql+psycopg://" + url[len("postgresql://"):]
+    return url
+
+
 engine = create_async_engine(
-    settings.database_url,
+    normalize_database_url(settings.database_url),
     echo=settings.is_development,
     pool_pre_ping=True,
 )

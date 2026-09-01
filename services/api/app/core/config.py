@@ -6,6 +6,7 @@ No secrets are hardcoded — all sensitive values come from the environment.
 
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -64,6 +65,24 @@ class Settings(BaseSettings):
 
     # ── Database ─────────────────────────────────────────────────
     database_url: str
+
+    @field_validator("database_url", mode="after")
+    @classmethod
+    def _normalize_database_url(cls, v: str) -> str:
+        """Normalize PostgreSQL URL for psycopg3 async/sync engine compatibility.
+
+        Cloud hosts (Supabase, Render) often supply plain 'postgresql://' or 'postgres://'.
+        SQLAlchemy's default driver for un-drivered 'postgresql://' is sync 'psycopg2'.
+        Normalizing to 'postgresql+psycopg://' routes directly to the installed psycopg v3 driver,
+        while preserving explicit schemes like 'postgresql+asyncpg://'.
+        """
+        if not v:
+            return v
+        if v.startswith("postgres://"):
+            return "postgresql+psycopg://" + v[len("postgres://"):]
+        if v.startswith("postgresql://") and not v.startswith("postgresql+"):
+            return "postgresql+psycopg://" + v[len("postgresql://"):]
+        return v
 
     # ── Keycloak (loaded for future batches) ─────────────────────
     keycloak_url: str = "http://localhost:8080"
