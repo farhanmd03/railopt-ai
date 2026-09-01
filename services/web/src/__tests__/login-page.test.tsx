@@ -178,6 +178,7 @@ describe("Login Page & 8-Role Demo Access", () => {
     expect(mockSigninRedirect).toHaveBeenCalledWith({
       extraQueryParams: {
         login_hint: "planner.demo",
+        audience: "https://railopt-ai-api",
       },
     });
   });

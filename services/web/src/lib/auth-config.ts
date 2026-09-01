@@ -30,14 +30,28 @@ export const APP_ROLES = [
 
 export type AppRole = (typeof APP_ROLES)[number];
 
-const KEYCLOAK_URL =
-  process.env.NEXT_PUBLIC_KEYCLOAK_URL?.replace(/\/+$/, "") || "http://localhost:8080";
-const KEYCLOAK_REALM = process.env.NEXT_PUBLIC_KEYCLOAK_REALM || "railopt";
-const KEYCLOAK_CLIENT_ID = process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID || "railopt-web";
+export const OIDC_ISSUER_URL =
+  process.env.NEXT_PUBLIC_OIDC_ISSUER_URL?.replace(/\/+$/, "") ||
+  (process.env.NEXT_PUBLIC_AUTH0_DOMAIN
+    ? (process.env.NEXT_PUBLIC_AUTH0_DOMAIN.startsWith("http")
+        ? process.env.NEXT_PUBLIC_AUTH0_DOMAIN.replace(/\/+$/, "")
+        : `https://${process.env.NEXT_PUBLIC_AUTH0_DOMAIN.replace(/\/+$/, "")}`)
+    : "") ||
+  (process.env.NEXT_PUBLIC_KEYCLOAK_URL
+    ? `${process.env.NEXT_PUBLIC_KEYCLOAK_URL.replace(/\/+$/, "")}/realms/${process.env.NEXT_PUBLIC_KEYCLOAK_REALM || "railopt"}`
+    : "http://localhost:8080/realms/railopt");
+
+export const OIDC_CLIENT_ID =
+  process.env.NEXT_PUBLIC_OIDC_CLIENT_ID ||
+  process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID ||
+  "railopt-web";
+
+export const OIDC_AUDIENCE =
+  process.env.NEXT_PUBLIC_OIDC_AUDIENCE || "https://railopt-ai-api";
 
 export const OIDC_CONFIG = {
-  authority: `${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}`,
-  client_id: KEYCLOAK_CLIENT_ID,
+  authority: OIDC_ISSUER_URL,
+  client_id: OIDC_CLIENT_ID,
   redirect_uri:
     typeof window !== "undefined"
       ? `${window.location.origin}/auth/callback`
@@ -48,6 +62,9 @@ export const OIDC_CONFIG = {
       : "http://localhost:3000/login",
   response_type: "code",
   scope: "openid profile email",
+  extraQueryParams: {
+    audience: OIDC_AUDIENCE,
+  },
   automaticSilentRenew: true,
   loadUserInfo: true,
 } as const;
@@ -84,8 +101,8 @@ export function sanitizeReturnUrl(url: string | null | undefined): string {
 
 export function getOidcConfig(): AuthProviderProps {
   return {
-    authority: `${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}`,
-    client_id: KEYCLOAK_CLIENT_ID,
+    authority: OIDC_ISSUER_URL,
+    client_id: OIDC_CLIENT_ID,
     redirect_uri:
       typeof window !== "undefined"
         ? `${window.location.origin}/auth/callback`
@@ -96,6 +113,9 @@ export function getOidcConfig(): AuthProviderProps {
         : "http://localhost:3000/login",
     response_type: "code",
     scope: "openid profile email",
+    extraQueryParams: {
+      audience: OIDC_AUDIENCE,
+    },
     automaticSilentRenew: true,
     userStore:
       typeof window !== "undefined"
@@ -140,7 +160,7 @@ export function parseJwtPayload(token: string | null | undefined): Record<string
 }
 
 /**
- * Extract authenticated roles from standard Keycloak token payload.
+ * Extract authenticated roles from OIDC token payload (Auth0 namespaced / Keycloak / generic).
  * Inspects both ID Token profile and Access Token claims.
  * Strictly whitelists against approved APP_ROLES.
  */
@@ -154,7 +174,25 @@ export function extractRoles(user: User | null | undefined): AppRole[] {
   const processPayload = (payload: Record<string, unknown> | null | undefined) => {
     if (!payload || typeof payload !== "object") return;
 
-    // 1. Check realm_access.roles
+    // 1. Check Auth0 namespaced claim (https://railopt.ai/roles)
+    const auth0Roles = payload["https://railopt.ai/roles"];
+    if (Array.isArray(auth0Roles)) {
+      auth0Roles.forEach((r) => {
+        if (typeof r === "string") extracted.add(r.toUpperCase());
+      });
+    }
+
+    // 2. Check direct top-level roles/groups/permissions claims
+    for (const key of ["roles", "groups", "permissions"]) {
+      const claim = payload[key];
+      if (Array.isArray(claim)) {
+        claim.forEach((r) => {
+          if (typeof r === "string") extracted.add(r.toUpperCase());
+        });
+      }
+    }
+
+    // 3. Check Keycloak realm_access.roles
     const realmAccess = payload.realm_access as { roles?: string[] } | undefined;
     if (realmAccess?.roles && Array.isArray(realmAccess.roles)) {
       realmAccess.roles.forEach((r) => {
@@ -162,22 +200,15 @@ export function extractRoles(user: User | null | undefined): AppRole[] {
       });
     }
 
-    // 2. Check resource_access[client_id].roles and resource_access['railopt-web'].roles
+    // 4. Check Keycloak resource_access[client_id].roles
     const resourceAccess = payload.resource_access as Record<string, { roles?: string[] }> | undefined;
     if (resourceAccess && typeof resourceAccess === "object") {
-      const clientAccess = resourceAccess[KEYCLOAK_CLIENT_ID] || resourceAccess["railopt-web"];
+      const clientAccess = resourceAccess[OIDC_CLIENT_ID] || resourceAccess["railopt-web"];
       if (clientAccess?.roles && Array.isArray(clientAccess.roles)) {
         clientAccess.roles.forEach((r) => {
           if (typeof r === "string") extracted.add(r.toUpperCase());
         });
       }
-    }
-
-    // 3. Check direct roles claim if mapped
-    if (Array.isArray(payload.roles)) {
-      payload.roles.forEach((r) => {
-        if (typeof r === "string") extracted.add(r.toUpperCase());
-      });
     }
   };
 

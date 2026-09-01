@@ -84,10 +84,48 @@ class Settings(BaseSettings):
             return "postgresql+psycopg://" + v[len("postgresql://"):]
         return v
 
-    # ── Keycloak (loaded for future batches) ─────────────────────
+    # ── Generic OIDC / Auth0 / Keycloak Authentication ──────────
+    oidc_issuer_url: str | None = None
+    oidc_client_id: str | None = None
+    oidc_audience: str | None = None
+    oidc_jwks_url: str | None = None
+
+    # Keycloak Legacy Fallbacks
     keycloak_url: str = "http://localhost:8080"
     keycloak_realm: str = "railopt"
     keycloak_client_id: str = "railopt-web"
+
+    @property
+    def effective_oidc_issuer(self) -> str:
+        """Resolve effective OIDC issuer (prefers generic OIDC_ISSUER_URL)."""
+        if self.oidc_issuer_url:
+            return self.oidc_issuer_url.strip()
+        base = self.keycloak_url.rstrip("/")
+        return f"{base}/realms/{self.keycloak_realm}"
+
+    @property
+    def effective_oidc_client_id(self) -> str:
+        """Resolve effective OIDC client ID."""
+        return (self.oidc_client_id or self.keycloak_client_id).strip()
+
+    @property
+    def effective_oidc_audience(self) -> str:
+        """Resolve target API audience for token validation."""
+        if self.oidc_audience:
+            return self.oidc_audience.strip()
+        return self.effective_oidc_client_id
+
+    @property
+    def effective_oidc_jwks_url(self) -> str:
+        """Resolve JWKS endpoint URL."""
+        if self.oidc_jwks_url:
+            return self.oidc_jwks_url.strip()
+        if self.oidc_issuer_url:
+            return f"{self.oidc_issuer_url.rstrip('/')}/.well-known/jwks.json"
+        base = self.keycloak_url.rstrip("/")
+        if "localhost" in base:
+            base = base.replace("localhost", "127.0.0.1")
+        return f"{base}/realms/{self.keycloak_realm}/protocol/openid-connect/certs"
 
     # ── LLM Explainability Provider Architecture ────────────────
     llm_provider: str = "auto"  # "auto" | "ollama" | "gemini" | "deterministic"

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RailOptLogo } from "@/components/brand/railopt-logo";
+import { OIDC_AUDIENCE } from "@/lib/auth-config";
 
 export interface DemoRoleInfo {
   role: string;
@@ -110,10 +111,11 @@ export default function LoginPage() {
 
   const handleDemoSignIn = async (roleInfo: DemoRoleInfo) => {
     try {
-      // Pass login_hint so Keycloak pre-fills username for evaluator convenience
+      // Pass login_hint so Auth0 / Keycloak pre-fills username, plus target audience
       await auth.signinRedirect({
         extraQueryParams: {
           login_hint: roleInfo.username,
+          audience: OIDC_AUDIENCE,
         },
       });
     } catch (err) {

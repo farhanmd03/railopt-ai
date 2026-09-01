@@ -41,8 +41,8 @@ class User(BaseModel):
         return any(r in self.roles for r in roles)
 
 
-class KeycloakTokenVerifier:
-    """Manages Keycloak JWKS caching and cryptographic JWT verification."""
+class TokenVerifier:
+    """Manages OIDC JWKS caching and cryptographic JWT verification (Auth0 / Keycloak)."""
 
     def __init__(self):
         self._jwks_client: jwt.PyJWKClient | None = None
@@ -50,20 +50,18 @@ class KeycloakTokenVerifier:
 
     @property
     def jwks_url(self) -> str:
-        base = settings.keycloak_url.rstrip("/")
-        # Normalize localhost to 127.0.0.1 for fast Windows routing if needed
-        if "localhost" in base:
-            base = base.replace("localhost", "127.0.0.1")
-        return f"{base}/realms/{settings.keycloak_realm}/protocol/openid-connect/certs"
+        return settings.effective_oidc_jwks_url
 
     @property
     def valid_issuers(self) -> list[str]:
-        base = settings.keycloak_url.rstrip("/")
-        issuers = [f"{base}/realms/{settings.keycloak_realm}"]
-        if "localhost" in base:
-            issuers.append(f"{base.replace('localhost', '127.0.0.1')}/realms/{settings.keycloak_realm}")
-        elif "127.0.0.1" in base:
-            issuers.append(f"{base.replace('127.0.0.1', 'localhost')}/realms/{settings.keycloak_realm}")
+        iss = settings.effective_oidc_issuer.rstrip("/")
+        issuers = [iss, f"{iss}/"]
+        if "localhost" in iss:
+            alt = iss.replace("localhost", "127.0.0.1")
+            issuers.extend([alt, f"{alt}/"])
+        elif "127.0.0.1" in iss:
+            alt = iss.replace("127.0.0.1", "localhost")
+            issuers.extend([alt, f"{alt}/"])
         return issuers
 
     def get_jwks_client(self) -> jwt.PyJWKClient:
@@ -72,7 +70,7 @@ class KeycloakTokenVerifier:
         return self._jwks_client
 
     def verify_token(self, token: str) -> dict[str, Any]:
-        """Cryptographically verify token signature, issuer, expiry, and client audience."""
+        """Cryptographically verify token signature, issuer, expiry, and target audience."""
         try:
             jwks_client = self.get_jwks_client()
             signing_key = jwks_client.get_signing_key_from_jwt(token)
@@ -95,31 +93,42 @@ class KeycloakTokenVerifier:
                     "verify_signature": True,
                     "verify_exp": True,
                     "verify_iss": True,
-                    "verify_aud": False,  # Keycloak access tokens put client_id in azp or aud
+                    "verify_aud": False,  # Custom multi-audience validation handled explicitly below
                 },
             )
 
-            # Validate exact client / audience matching (no broad/substring fallbacks)
+            # Validate target API audience and/or authorized party (azp / aud)
             azp = payload.get("azp")
             aud = payload.get("aud")
+            expected_aud = settings.effective_oidc_audience
+            expected_client = settings.effective_oidc_client_id
+
             valid_client = False
-            if azp == settings.keycloak_client_id:
+            # 1. Match configured API audience (e.g. https://railopt-ai-api)
+            if isinstance(aud, list) and expected_aud in aud:
                 valid_client = True
-            elif isinstance(aud, list) and settings.keycloak_client_id in aud:
+            elif isinstance(aud, str) and aud == expected_aud:
                 valid_client = True
-            elif isinstance(aud, str) and aud == settings.keycloak_client_id:
+            # 2. Match authorized party or client ID
+            elif azp in (expected_client, expected_aud):
                 valid_client = True
-            elif settings.keycloak_client_id in payload.get("resource_access", {}):
+            elif isinstance(aud, list) and expected_client in aud:
+                valid_client = True
+            elif isinstance(aud, str) and aud == expected_client:
+                valid_client = True
+            # 3. Match Keycloak resource_access mapping if present
+            elif expected_client in payload.get("resource_access", {}):
                 valid_client = True
 
             if not valid_client:
                 logger.warning(
-                    "Token client validation failed. azp='%s', aud=%s, expected='%s'",
+                    "Token client/audience validation failed. azp='%s', aud=%s, expected_aud='%s', expected_client='%s'",
                     azp,
                     aud,
-                    settings.keycloak_client_id,
+                    expected_aud,
+                    expected_client,
                 )
-                raise InvalidTokenError("Token not issued for this client application")
+                raise InvalidTokenError("Token not issued for this client application or API audience")
 
             return payload
 
@@ -139,26 +148,61 @@ class KeycloakTokenVerifier:
             ) from exc
 
 
-token_verifier = KeycloakTokenVerifier()
+# Alias for backward compatibility
+KeycloakTokenVerifier = TokenVerifier
+token_verifier = TokenVerifier()
 
 
 def extract_user_from_payload(payload: dict[str, Any]) -> User:
-    """Extract User domain model with realm & client roles from validated claims."""
-    # Extract realm roles
-    realm_roles = payload.get("realm_access", {}).get("roles", [])
+    """Extract User domain model with roles from validated claims (Auth0 / Generic OIDC / Keycloak)."""
+    extracted_roles: set[str] = set()
 
-    # Extract client roles if any
+    # 1. Auth0 namespaced roles claim (https://railopt.ai/roles)
+    auth0_roles = payload.get("https://railopt.ai/roles")
+    if isinstance(auth0_roles, list):
+        for r in auth0_roles:
+            if isinstance(r, str):
+                extracted_roles.add(r.upper())
+
+    # 2. Direct top-level roles / groups claim
+    for claim_key in ("roles", "groups", "permissions"):
+        direct_claims = payload.get(claim_key)
+        if isinstance(direct_claims, list):
+            for r in direct_claims:
+                if isinstance(r, str):
+                    extracted_roles.add(r.upper())
+
+    # 3. Keycloak realm roles
+    realm_roles = payload.get("realm_access", {}).get("roles", [])
+    if isinstance(realm_roles, list):
+        for r in realm_roles:
+            if isinstance(r, str):
+                extracted_roles.add(r.upper())
+
+    # 4. Keycloak client roles
+    client_id = settings.effective_oidc_client_id
     client_roles = (
         payload.get("resource_access", {})
-        .get(settings.keycloak_client_id, {})
+        .get(client_id, {})
         .get("roles", [])
     )
+    if isinstance(client_roles, list):
+        for r in client_roles:
+            if isinstance(r, str):
+                extracted_roles.add(r.upper())
 
-    all_roles = sorted(list(set(realm_roles + client_roles)))
+    all_roles = sorted(list(extracted_roles))
+
+    username = (
+        payload.get("preferred_username")
+        or payload.get("nickname")
+        or payload.get("email")
+        or payload.get("sub", "")
+    )
 
     return User(
         id=str(payload.get("sub", "")),
-        username=payload.get("preferred_username") or payload.get("sub", ""),
+        username=str(username),
         email=payload.get("email"),
         first_name=payload.get("given_name"),
         last_name=payload.get("family_name"),

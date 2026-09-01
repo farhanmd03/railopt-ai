@@ -238,4 +238,74 @@ describe("Auth Configuration & Role Mapping", () => {
       expect(sanitizeReturnUrl("javascript:alert(1)")).toBe("/dashboard");
     });
   });
+
+  describe("Auth0 OIDC Integration & Custom Claims", () => {
+    it("extracts roles from Auth0 namespaced claim 'https://railopt.ai/roles'", () => {
+      const mockUser = {
+        profile: {
+          sub: "auth0|12345",
+          email: "admin.demo@railopt.ai",
+          name: "Admin User",
+          "https://railopt.ai/roles": ["ADMIN", "PLANNER"],
+        },
+      } as unknown as User;
+
+      const roles = extractRoles(mockUser);
+      expect(roles).toEqual(["ADMIN", "PLANNER"]);
+    });
+
+    it("extracts lowercase Auth0 roles and normalizes to standard uppercase roles", () => {
+      const mockUser = {
+        profile: {
+          sub: "auth0|67890",
+          "https://railopt.ai/roles": ["engineering", "snt", "trd"],
+        },
+      } as unknown as User;
+
+      const roles = extractRoles(mockUser);
+      expect(roles).toEqual(["ENGINEERING", "SNT", "TRD"]);
+    });
+
+    it("extracts Auth0 roles from access_token JWT payload", () => {
+      const payload = {
+        sub: "auth0|jwt-user",
+        aud: ["https://railopt-ai-api", "https://farhanmd03.us.auth0.com/userinfo"],
+        iss: "https://farhanmd03.us.auth0.com/",
+        "https://railopt.ai/roles": ["APPROVER", "CONTROL"],
+      };
+      const base64Payload = Buffer.from(JSON.stringify(payload)).toString("base64url");
+      const fakeAccessToken = `header.${base64Payload}.signature`;
+
+      const mockUser = {
+        profile: {
+          sub: "auth0|jwt-user",
+        },
+        access_token: fakeAccessToken,
+      } as unknown as User;
+
+      const roles = extractRoles(mockUser);
+      expect(roles).toEqual(["CONTROL", "APPROVER"]);
+    });
+
+    it("buildAuthUser correctly builds AuthUser from Auth0 profile and roles", () => {
+      const mockUser = {
+        profile: {
+          sub: "auth0|user-999",
+          preferred_username: "planner.demo",
+          email: "planner@railopt.ai",
+          given_name: "Rail",
+          family_name: "Planner",
+          "https://railopt.ai/roles": ["PLANNER"],
+        },
+      } as unknown as User;
+
+      const authUser = buildAuthUser(mockUser);
+      expect(authUser).not.toBeNull();
+      expect(authUser?.id).toBe("auth0|user-999");
+      expect(authUser?.username).toBe("planner.demo");
+      expect(authUser?.name).toBe("Rail Planner");
+      expect(authUser?.email).toBe("planner@railopt.ai");
+      expect(authUser?.roles).toEqual(["PLANNER"]);
+    });
+  });
 });
