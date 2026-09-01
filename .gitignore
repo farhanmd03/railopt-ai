@@ -31,7 +31,7 @@ keycloak_data/
 # Ollama / local model files
 *.gguf
 *.bin
-models/
+/models/
 
 # Temporary & Local files
 tmp/
