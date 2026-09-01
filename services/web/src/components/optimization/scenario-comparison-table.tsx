@@ -3,6 +3,7 @@
 import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScenarioComparisonSummary } from "@/lib/types/scenario";
+import { ExplainButton } from "@/components/explainability/explain-button";
 import { TrendingUp, TrendingDown, Minus, Info, Sparkles } from "lucide-react";
 
 interface ScenarioComparisonTableProps {
@@ -94,7 +95,16 @@ export function ScenarioComparisonTable({
                 Comparing Base Run #{baseRunId} against Experimental Scenario: {scenarioName}
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <ExplainButton
+                request={{
+                  explanation_type: "SCENARIO_COMPARISON",
+                  run_id: Number(baseRunId),
+                  scenario_id: String(scenarioRunId || baseRunId),
+                }}
+                label="Explain Scenario"
+                className="h-7 text-xs"
+              />
               <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-secondary text-secondary-foreground border border-border">
                 Base Run: #{baseRunId}
               </span>

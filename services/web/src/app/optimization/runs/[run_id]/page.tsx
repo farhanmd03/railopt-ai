@@ -16,6 +16,7 @@ import { NetworkMapPlaceholder } from "@/components/optimization/network-map-pla
 import { OptimizationHistory } from "@/components/optimization/optimization-history";
 import { ApprovalWorkflowPanel } from "@/components/optimization/approval-workflow-panel";
 import { ApprovalAuditHistory } from "@/components/optimization/approval-audit-history";
+import { ExplainButton } from "@/components/explainability/explain-button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { LoadingState } from "@/components/feedback/loading-state";
@@ -220,6 +221,15 @@ export default function OptimizationRunPage({ params }: OptimizationRunPageProps
             />
             <span>{runQuery.isFetching || blocksQuery.isFetching ? "Updating..." : "Refresh"}</span>
           </Button>
+
+          <ExplainButton
+            request={{
+              explanation_type: "RUN_SUMMARY",
+              run_id: run.id,
+            }}
+            label="Explain Result"
+            className="h-8"
+          />
 
           <Link href={`/optimization/runs/${encodeURIComponent(runIdParam)}/what-if`}>
             <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs bg-card hover:bg-muted text-blue-700 border-blue-200">
@@ -586,15 +596,23 @@ export default function OptimizationRunPage({ params }: OptimizationRunPageProps
                   </p>
                   <div className="flex flex-wrap gap-2 pt-1">
                     {run.unassigned_task_ids.map((taskId) => (
-                      <Link
+                      <div
                         key={taskId}
-                        href={`/maintenance`}
-                        className="inline-flex items-center gap-1.5 font-mono text-xs font-semibold bg-background px-2.5 py-1 rounded border border-border hover:border-primary text-foreground group"
+                        className="inline-flex items-center gap-1.5 font-mono text-xs font-semibold bg-background px-2.5 py-1 rounded border border-border text-foreground"
                       >
                         <Wrench className="h-3.5 w-3.5 text-blue-600" />
                         <span>{taskId}</span>
-                        <ExternalLink className="h-3 w-3 text-muted-foreground group-hover:text-primary" />
-                      </Link>
+                        <ExplainButton
+                          request={{
+                            explanation_type: "UNASSIGNED_TASK",
+                            run_id: run.id,
+                            task_id: taskId,
+                          }}
+                          label="Why unassigned?"
+                          variant="ghost"
+                          className="h-5 px-1.5 text-[10px] ml-1"
+                        />
+                      </div>
                     ))}
                   </div>
                 </div>

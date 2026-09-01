@@ -46,9 +46,10 @@ class Settings(BaseSettings):
     keycloak_realm: str = "railopt"
     keycloak_client_id: str = "railopt-web"
 
-    # ── Ollama (loaded for future batches) ───────────────────────
+    # ── Ollama Explainability (Batch 7L) ─────────────────────────
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "gemma2:2b"
+    ollama_model: str = "llama3.2:1b"
+    ollama_timeout_seconds: float = 25.0
 
     @property
     def is_development(self) -> bool:
