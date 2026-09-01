@@ -14,6 +14,7 @@ COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
+ENV DOCKER_BUILD=true
 
 # Set build-time public environment variables
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
