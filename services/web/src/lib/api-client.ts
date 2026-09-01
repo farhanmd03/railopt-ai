@@ -69,16 +69,14 @@ export async function apiClient<T>(
         errorBody = await response.text();
       }
 
-      const apiError: ApiError = {
-        status: response.status,
-        message:
-          typeof errorBody === "object" && errorBody !== null && "detail" in errorBody
-            ? String((errorBody as { detail: unknown }).detail)
-            : `API request failed with status ${response.status}`,
-        detail: typeof errorBody === "object" && errorBody !== null ? (errorBody as Record<string, unknown>) : undefined,
-      };
+      const message =
+        typeof errorBody === "object" && errorBody !== null && "detail" in errorBody
+          ? String((errorBody as { detail: unknown }).detail)
+          : `API request failed with status ${response.status}`;
+      const detail =
+        typeof errorBody === "object" && errorBody !== null ? (errorBody as Record<string, unknown>) : undefined;
 
-      throw apiError;
+      throw new ApiError(response.status, message, detail);
     }
 
     if (response.status === 204) {
@@ -87,13 +85,13 @@ export async function apiClient<T>(
 
     return (await response.json()) as T;
   } catch (error) {
-    if ((error as ApiError).status) {
+    if (error instanceof ApiError) {
       throw error;
     }
-    const networkError: ApiError = {
-      status: 0,
-      message: (error as Error).message || "Network connection error",
-    };
+    const networkError = new ApiError(
+      0,
+      (error as Error).message || "Network connection error"
+    );
     throw networkError;
   }
 }

@@ -265,10 +265,10 @@ async def create_optimization_run(
         )
         return _format_run_response(run_record)
     except Exception as e:
-        logger.error("Failed to execute optimization run: %s", e)
+        logger.exception("Failed to execute optimization run: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while executing the optimization solver. Check server logs for details.",
+            detail=f"Failed to execute optimization solver: {e}",
         )
 
 

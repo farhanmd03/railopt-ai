@@ -7,10 +7,10 @@ human-approved railway blocks.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class OptimizationRunCreateRequest(BaseModel):
@@ -24,6 +24,13 @@ class OptimizationRunCreateRequest(BaseModel):
         None,
         description="End timestamp of the optimization horizon (UTC). If null, covers latest candidate window.",
     )
+
+    @field_validator("planning_start", "planning_end", mode="after")
+    @classmethod
+    def ensure_utc_timestamps(cls, v: datetime | None) -> datetime | None:
+        if v is not None and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
     run_type: str = Field(
         default="standard",
         max_length=50,

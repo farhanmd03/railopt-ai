@@ -1,8 +1,12 @@
 import React from "react";
 import { Badge } from "@/components/ui/badge";
-import { Check, X, Clock, Sparkles } from "lucide-react";
+import { Check, X, Clock, Sparkles, FileText } from "lucide-react";
 
 export type ApprovalStatusType =
+  | "DRAFT"
+  | "SUBMITTED"
+  | "APPROVED"
+  | "REJECTED"
   | "Candidate"
   | "Approved"
   | "Rejected"
@@ -20,7 +24,8 @@ export function ApprovalBadge({
   className,
   showIcon = true,
 }: ApprovalBadgeProps) {
-  const norm = (status || "Candidate").toLowerCase();
+  const raw = status || "DRAFT";
+  const norm = raw.toLowerCase().trim();
 
   if (norm === "approved") {
     return (
@@ -38,11 +43,27 @@ export function ApprovalBadge({
       </Badge>
     );
   }
+  if (norm === "submitted") {
+    return (
+      <Badge variant="warning" className={className}>
+        {showIcon && <Clock className="h-3 w-3" />}
+        <span>Submitted</span>
+      </Badge>
+    );
+  }
   if (norm === "pending") {
     return (
       <Badge variant="warning" className={className}>
         {showIcon && <Clock className="h-3 w-3" />}
         <span>Pending</span>
+      </Badge>
+    );
+  }
+  if (norm === "draft") {
+    return (
+      <Badge variant="neutral" className={className}>
+        {showIcon && <FileText className="h-3 w-3" />}
+        <span>Draft</span>
       </Badge>
     );
   }

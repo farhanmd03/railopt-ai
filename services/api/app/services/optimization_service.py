@@ -169,6 +169,29 @@ class OptimizationService:
         )
 
         # 3. Transactional Database Persistence
+        return await cls.persist_run_result(
+            db=db,
+            run_result=run_result,
+            run_type=run_type,
+            weights=weights,
+            hard_constraints=hard_constraints,
+            excluded_candidate_ids=excluded_candidate_ids,
+        )
+
+    @classmethod
+    async def persist_run_result(
+        cls,
+        db: AsyncSession,
+        run_result: OptimizationRunResult,
+        run_type: str = "standard",
+        weights: ObjectiveWeights | None = None,
+        hard_constraints: HardConstraintConfig | None = None,
+        excluded_candidate_ids: list[str] | None = None,
+    ) -> tuple[OptimizationRun, OptimizationRunResult]:
+        """Persist solver run results and scheduled blocks atomically into the database."""
+        weights = weights or ObjectiveWeights()
+        hard_constraints = hard_constraints or HardConstraintConfig()
+
         try:
             # Build parameter metadata JSON
             param_dict: dict[str, Any] = {
@@ -229,6 +252,18 @@ class OptimizationService:
             # If solver succeeded, persist scheduled blocks and block-task junctions
             if run_result.solver_status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE):
                 for b in run_result.scheduled_blocks:
+                    # Invariant Check: Every persisted block must have valid, non-null timestamps with start < end
+                    if b.start_time is None or b.end_time is None:
+                        raise ValueError(
+                            f"Cannot persist optimized block '{b.optimized_block_id}': "
+                            f"start_time and end_time must not be NULL."
+                        )
+                    if b.start_time >= b.end_time:
+                        raise ValueError(
+                            f"Cannot persist optimized block '{b.optimized_block_id}': "
+                            f"start_time ({b.start_time}) must be strictly before end_time ({b.end_time})."
+                        )
+
                     block_type_str = "integrated" if b.is_integrated else "single"
                     departments_str = ",".join(b.departments_involved)
 

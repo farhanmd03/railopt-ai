@@ -10,8 +10,15 @@ export interface PaginatedResponse<T> {
   total_pages: number;
 }
 
-export interface ApiError {
+export class ApiError extends Error {
   status: number;
-  message: string;
   detail?: string | Record<string, unknown>;
+
+  constructor(status: number, message: string, detail?: string | Record<string, unknown>) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+    Object.setPrototypeOf(this, ApiError.prototype);
+  }
 }

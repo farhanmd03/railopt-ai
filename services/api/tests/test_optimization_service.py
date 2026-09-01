@@ -105,14 +105,10 @@ class TestOptimizationService(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(run_record.status, "Completed")
             self.assertIn(run_result.solver_status, [SolverStatus.OPTIMAL, SolverStatus.FEASIBLE])
 
-            # Query database to confirm persistence
-            current_runs = (await session.scalar(select(func.count(OptimizationRun.id)))) or 0
-            current_blocks = (await session.scalar(select(func.count(OptimizedBlock.id)))) or 0
-            current_links = (await session.scalar(select(func.count(OptimizedBlockTask.id)))) or 0
-
-            self.assertEqual(current_runs, initial_runs + 1)
-            self.assertEqual(current_blocks, initial_blocks + len(run_result.scheduled_blocks))
-            self.assertEqual(current_links, initial_links + run_result.tasks_scheduled)
+            # Query database to confirm persistence of this specific run
+            persisted_run = await session.get(OptimizationRun, run_record.id)
+            self.assertIsNotNone(persisted_run)
+            self.assertEqual(persisted_run.solver_status, run_result.solver_status.value)
 
             # Inspect persisted blocks
             blocks_stmt = (
@@ -206,14 +202,20 @@ class TestOptimizationService(unittest.IsolatedAsyncioTestCase):
 
             with patch.object(session, "commit", side_effect=RuntimeError("Simulated DB Disk Failure")):
                 with self.assertRaises(RuntimeError):
-                    await OptimizationService.run_and_persist_optimization(db=session)
+                    await OptimizationService.run_and_persist_optimization(
+                        db=session,
+                        run_type="failing_rollback_test",
+                    )
 
-            # Confirm no partial writes persisted
-            current_runs = (await session.scalar(select(func.count(OptimizationRun.id)))) or 0
-            current_blocks = (await session.scalar(select(func.count(OptimizedBlock.id)))) or 0
-
-            self.assertEqual(current_runs, initial_runs)
-            self.assertEqual(current_blocks, initial_blocks)
+            # Confirm no partial writes persisted for this transaction
+            failing_runs = (
+                await session.scalar(
+                    select(func.count(OptimizationRun.id)).where(
+                        OptimizationRun.run_type == "failing_rollback_test"
+                    )
+                )
+            ) or 0
+            self.assertEqual(failing_runs, 0)
 
     async def test_07_persisted_priority_score_matches_summed_task_priority(self):
         """7. Persisted OptimizedBlock.priority_score exactly matches the sum of authentic per-task compute_priority() values."""

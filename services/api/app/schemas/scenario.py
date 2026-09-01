@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.optimization import OptimizationRunResponse, OptimizedBlockResponse
 
@@ -31,6 +31,13 @@ class ScenarioCreateRequest(BaseModel):
         default=None,
         description="Alternative planning horizon end timestamp",
     )
+
+    @field_validator("planning_start", "planning_end", mode="after")
+    @classmethod
+    def ensure_utc_timestamps(cls, v: datetime | None) -> datetime | None:
+        if v is not None and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
     solver_time_limit_seconds: float = Field(
         default=10.0,
         ge=1.0,

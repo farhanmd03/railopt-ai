@@ -13,14 +13,17 @@ import asyncio
 import json
 import os
 import sys
+from pathlib import Path
 import unittest
 from unittest.mock import AsyncMock, patch
 
-sys.path.insert(0, os.path.abspath("services/api"))
+API_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(API_DIR))
 
+from datetime import datetime, timedelta, timezone
 import httpx
 from fastapi import status
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.core.config import settings
 from app.core.database import async_session_factory
@@ -91,9 +94,12 @@ class TestExplainabilityAPI(unittest.IsolatedAsyncioTestCase):
             session.add(self.run)
             await session.flush()
 
+            now = datetime.now(timezone.utc)
             self.block = OptimizedBlock(
                 optimization_run_id=self.run.id,
                 section_id=sec_id,
+                block_start=now + timedelta(days=1),
+                block_end=now + timedelta(days=1, hours=4),
                 block_duration_hrs=4.0,
                 block_type="integrated",
                 is_integrated=True,
@@ -135,6 +141,15 @@ class TestExplainabilityAPI(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.auth_patcher.stop()
         await self.client.aclose()
+        # Clean up seeded test records from database
+        async with async_session_factory() as session:
+            if hasattr(self, "block") and self.block:
+                await session.execute(text("DELETE FROM optimized_block_tasks WHERE optimized_block_id = :bid"), {"bid": self.block.id})
+                await session.execute(text("DELETE FROM optimized_blocks WHERE id = :bid"), {"bid": self.block.id})
+            if hasattr(self, "run") and self.run:
+                await session.execute(text("DELETE FROM optimization_runs WHERE id = :rid"), {"rid": self.run.id})
+            await session.execute(text("DELETE FROM maintenance_tasks WHERE task_id = 'TSK-EXP-99'"))
+            await session.commit()
 
     async def test_01_anonymous_request_rejected(self):
         """Anonymous access to explanations must return 401."""

@@ -54,7 +54,7 @@ describe("API Client", () => {
     });
     global.fetch = mockFetch;
 
-    await expect(apiGet("/api/v1/optimization/runs")).rejects.toEqual({
+    await expect(apiGet("/api/v1/optimization/runs")).rejects.toMatchObject({
       status: 403,
       message: "Insufficient role privileges",
       detail: { detail: "Insufficient role privileges" },

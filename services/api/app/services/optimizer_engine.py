@@ -51,6 +51,15 @@ logger = logging.getLogger(__name__)
 OBJECTIVE_SCALE = 1000
 
 
+def _ensure_utc(dt: datetime | None) -> datetime | None:
+    """Ensure a datetime is timezone-aware UTC."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def check_candidate_overlap(c1: OptimizationCandidate, c2: OptimizationCandidate) -> bool:
     """Check whether two candidates on the same section overlap temporally."""
     if c1.section_id != c2.section_id:
@@ -68,7 +77,13 @@ def build_selectable_candidates(
     selectable: list[OptimizationCandidate] = []
     pruning_warnings: list[str] = []
 
+    p_start = _ensure_utc(planning_start)
+    p_end = _ensure_utc(planning_end)
+
     for c in candidates:
+        c_start = _ensure_utc(c.candidate_start)
+        c_end = _ensure_utc(c.candidate_end)
+
         # 1. Feasibility status constraint
         if hard_constraints.require_candidate_feasible and c.computed_feasibility_status != "FEASIBLE":
             pruning_warnings.append(
@@ -105,9 +120,9 @@ def build_selectable_candidates(
             continue
 
         # 6. Planning horizon constraint (fully-contained policy)
-        if c.candidate_start < planning_start or c.candidate_end > planning_end:
+        if c_start < p_start or c_end > p_end:
             pruning_warnings.append(
-                f"Candidate '{c.candidate_id}' pruned: outside planning horizon [{planning_start.isoformat()}, {planning_end.isoformat()}]"
+                f"Candidate '{c.candidate_id}' pruned: outside planning horizon [{p_start.isoformat()}, {p_end.isoformat()}]"
             )
             continue
 
@@ -138,11 +153,14 @@ class CPSATSolver:
         weights = weights or ObjectiveWeights()
         hard_constraints = hard_constraints or HardConstraintConfig()
 
-        # Derive planning horizon if not provided
+        # Normalize or derive planning horizon
+        planning_start = _ensure_utc(planning_start)
+        planning_end = _ensure_utc(planning_end)
+
         if not planning_start or not planning_end:
             if candidates:
-                planning_start = min(c.candidate_start for c in candidates)
-                planning_end = max(c.candidate_end for c in candidates)
+                planning_start = _ensure_utc(min(c.candidate_start for c in candidates))
+                planning_end = _ensure_utc(max(c.candidate_end for c in candidates))
             else:
                 now = datetime.now(timezone.utc)
                 planning_start = now

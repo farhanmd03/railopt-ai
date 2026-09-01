@@ -16,11 +16,57 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+import os
+import urllib.parse
+import urllib.request
 from app.main import app
 
+KEYCLOAK_URL = os.getenv("KEYCLOAK_URL", "http://127.0.0.1:8080").replace("localhost", "127.0.0.1").rstrip("/")
+REALM = "railopt"
+CLIENT_ID = "railopt-web"
+DEMO_PASSWORD = os.getenv("DEMO_USER_PASSWORD", "railopt_demo_2026")
 
-async def asgi_request(app, method: str, path: str, query_string: str = "") -> tuple[int, dict]:
+
+def obtain_demo_token(username: str = "engineering.demo") -> str | None:
+    """Acquire real JWT access token from Keycloak for testing."""
+    url = f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/token"
+    data = urllib.parse.urlencode({
+        "client_id": CLIENT_ID,
+        "username": username,
+        "password": DEMO_PASSWORD,
+        "grant_type": "password",
+        "scope": "openid profile email",
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            res = json.loads(resp.read().decode("utf-8"))
+            return res["access_token"]
+    except Exception:
+        return None
+
+
+async def asgi_request(
+    app,
+    method: str,
+    path: str,
+    query_string: str = "",
+    token: str | None = None,
+) -> tuple[int, dict]:
     """Execute an ASGI request directly through FastAPI."""
+    headers = [
+        (b"host", b"testserver"),
+        (b"accept", b"application/json"),
+    ]
+    if token:
+        headers.append((b"authorization", f"Bearer {token}".encode("utf-8")))
+
     scope = {
         "type": "http",
         "asgi": {"version": "3.0", "spec_version": "2.0"},
@@ -30,10 +76,7 @@ async def asgi_request(app, method: str, path: str, query_string: str = "") -> t
         "path": path,
         "raw_path": path.encode("utf-8"),
         "query_string": query_string.encode("utf-8"),
-        "headers": [
-            (b"host", b"testserver"),
-            (b"accept", b"application/json"),
-        ],
+        "headers": headers,
         "state": {},
     }
 
@@ -93,48 +136,67 @@ async def run_all_tests():
     assert status == 200 and data["total"] == 6, f"Station section filter failed: {data}"
     print(f"[PASS] GET /api/v1/stations?section_id=HOW_SEC_001 (mapped count={data['total']})")
 
-    # 4. Assets
-    status, data = await asgi_request(app, "GET", "/api/v1/assets", "page_size=100")
-    assert status == 200 and data["total"] == 101, f"Assets list failed: {data}"
-    print(f"[PASS] GET /api/v1/assets (total={data['total']})")
+    # Token setup for authenticated routes
+    token = obtain_demo_token("engineering.demo")
+    from unittest.mock import patch
+    import jwt
 
-    status, data = await asgi_request(app, "GET", "/api/v1/assets", "department=Engineering&asset_type=Track")
-    assert status == 200 and data["total"] > 0, f"Asset filter failed: {data}"
-    print(f"[PASS] GET /api/v1/assets?department=Engineering&asset_type=Track (filtered count={data['total']})")
+    mock_payload = {
+        "sub": "eng-1",
+        "preferred_username": "engineering.demo",
+        "email": "engineering@railopt.demo",
+        "given_name": "Engineering",
+        "family_name": "User",
+        "realm_access": {"roles": ["ENGINEERING", "PLANNER", "ADMIN"]},
+        "roles": ["ENGINEERING", "PLANNER", "ADMIN"],
+    }
+    mock_token = jwt.encode(mock_payload, "secret-key", algorithm="HS256")
+    auth_token = token or mock_token
+    with patch("app.core.security.token_verifier.verify_token") as mock_verify:
+        mock_verify.return_value = mock_payload
 
-    status, data = await asgi_request(app, "GET", "/api/v1/assets/TRK-HWH-01")
-    assert status == 200 and data["asset_id"] == "TRK-HWH-01", f"Asset get failed: {data}"
-    print("[PASS] GET /api/v1/assets/TRK-HWH-01")
+        # 4. Assets
+        status, data = await asgi_request(app, "GET", "/api/v1/assets", "page_size=100", token=auth_token)
+        assert status == 200 and data["total"] == 101, f"Assets list failed: {data}"
+        print(f"[PASS] GET /api/v1/assets (total={data['total']})")
 
-    # 5. Maintenance Tasks
-    status, data = await asgi_request(app, "GET", "/api/v1/maintenance-tasks", "page_size=100")
-    assert status == 200 and data["total"] == 53, f"Maintenance list failed: {data}"
-    print(f"[PASS] GET /api/v1/maintenance-tasks (total={data['total']})")
+        status, data = await asgi_request(app, "GET", "/api/v1/assets", "department=Engineering&asset_type=Track", token=auth_token)
+        assert status == 200 and data["total"] > 0, f"Asset filter failed: {data}"
+        print(f"[PASS] GET /api/v1/assets?department=Engineering&asset_type=Track (filtered count={data['total']})")
 
-    status, data = await asgi_request(app, "GET", "/api/v1/maintenance-tasks", "department=S%26T")
-    assert status == 200 and data["total"] > 0, f"Maintenance dept filter failed: {data}"
-    print(f"[PASS] GET /api/v1/maintenance-tasks?department=S&T (count={data['total']})")
+        status, data = await asgi_request(app, "GET", "/api/v1/assets/TRK-HWH-01", token=auth_token)
+        assert status == 200 and data["asset_id"] == "TRK-HWH-01", f"Asset get failed: {data}"
+        print("[PASS] GET /api/v1/assets/TRK-HWH-01")
 
-    status, data = await asgi_request(app, "GET", "/api/v1/maintenance-tasks", "severity=Critical")
-    assert status == 200 and data["total"] > 0, f"Maintenance severity filter failed: {data}"
-    print(f"[PASS] GET /api/v1/maintenance-tasks?severity=Critical (count={data['total']})")
+        # 5. Maintenance Tasks
+        status, data = await asgi_request(app, "GET", "/api/v1/maintenance-tasks", "page_size=100", token=auth_token)
+        assert status == 200 and data["total"] == 53, f"Maintenance list failed: {data}"
+        print(f"[PASS] GET /api/v1/maintenance-tasks (total={data['total']})")
 
-    status, data = await asgi_request(app, "GET", "/api/v1/maintenance-tasks/WO-0001")
-    assert status == 200 and data["task_id"] == "WO-0001", f"Maintenance get failed: {data}"
-    print("[PASS] GET /api/v1/maintenance-tasks/WO-0001")
+        status, data = await asgi_request(app, "GET", "/api/v1/maintenance-tasks", "department=S%26T", token=auth_token)
+        assert status == 200 and data["total"] > 0, f"Maintenance dept filter failed: {data}"
+        print(f"[PASS] GET /api/v1/maintenance-tasks?department=S&T (count={data['total']})")
 
-    # 6. Pagination & Validation
-    status, data = await asgi_request(app, "GET", "/api/v1/assets", "page=1&page_size=10")
-    assert status == 200 and data["total_pages"] == 11 and len(data["items"]) == 10, f"Pagination failed: {data}"
-    print("[PASS] Pagination math (total=101, page_size=10 -> total_pages=11)")
+        status, data = await asgi_request(app, "GET", "/api/v1/maintenance-tasks", "severity=Critical", token=auth_token)
+        assert status == 200 and data["total"] > 0, f"Maintenance severity filter failed: {data}"
+        print(f"[PASS] GET /api/v1/maintenance-tasks?severity=Critical (count={data['total']})")
 
-    status, data = await asgi_request(app, "GET", "/api/v1/assets", "page=0")
-    assert status == 422, f"Expected 422 for page=0, got {status}"
-    print("[PASS] Input validation (page=0 -> 422)")
+        status, data = await asgi_request(app, "GET", "/api/v1/maintenance-tasks/WO-0001", token=auth_token)
+        assert status == 200 and data["task_id"] == "WO-0001", f"Maintenance get failed: {data}"
+        print("[PASS] GET /api/v1/maintenance-tasks/WO-0001")
 
-    status, data = await asgi_request(app, "GET", "/api/v1/assets", "page_size=500")
-    assert status == 422, f"Expected 422 for page_size=500, got {status}"
-    print("[PASS] Input validation (page_size=500 -> 422)")
+        # 6. Pagination & Validation
+        status, data = await asgi_request(app, "GET", "/api/v1/assets", "page=1&page_size=10", token=auth_token)
+        assert status == 200 and data["total_pages"] == 11 and len(data["items"]) == 10, f"Pagination failed: {data}"
+        print("[PASS] Pagination math (total=101, page_size=10 -> total_pages=11)")
+
+        status, data = await asgi_request(app, "GET", "/api/v1/assets", "page=0", token=auth_token)
+        assert status == 422, f"Expected 422 for page=0, got {status}"
+        print("[PASS] Input validation (page=0 -> 422)")
+
+        status, data = await asgi_request(app, "GET", "/api/v1/assets", "page_size=500", token=auth_token)
+        assert status == 422, f"Expected 422 for page_size=500, got {status}"
+        print("[PASS] Input validation (page_size=500 -> 422)")
 
     print("\nALL 16 ASGI DIRECT TESTS PASSED SUCCESSFULLY!")
 
