@@ -1,7 +1,7 @@
 import React from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { describe, it, expect, vi } from "vitest";
-import LoginPage from "@/app/login/page";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import LoginPage, { DEMO_ROLES } from "@/app/login/page";
 import * as reactOidcContext from "react-oidc-context";
 
 vi.mock("next/navigation", () => ({
@@ -14,7 +14,17 @@ vi.mock("react-oidc-context", () => ({
   useAuth: vi.fn(),
 }));
 
-describe("Login Page", () => {
+describe("Login Page & 8-Role Demo Access", () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv, NEXT_PUBLIC_DEMO_ACCESS_ENABLED: "true" };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
   it("renders RailOpt AI brand, division, and trust statement", () => {
     vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
       isAuthenticated: false,
@@ -33,7 +43,7 @@ describe("Login Page", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders Sign in button and triggers signinRedirect on click", () => {
+  it("renders standard SSO button and triggers signinRedirect on click", () => {
     const mockSigninRedirect = vi.fn();
     vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
       isAuthenticated: false,
@@ -44,14 +54,95 @@ describe("Login Page", () => {
 
     render(<LoginPage />);
 
-    const signInBtn = screen.getByRole("button", { name: /continue with railway sso|sign in with railopt/i });
+    const signInBtn = screen.getByRole("button", { name: /continue with railway sso/i });
     expect(signInBtn).toBeInTheDocument();
 
     fireEvent.click(signInBtn);
     expect(mockSigninRedirect).toHaveBeenCalledTimes(1);
   });
 
-  it("does NOT render password or credential collection inputs", () => {
+  it("renders Demo Access section when NEXT_PUBLIC_DEMO_ACCESS_ENABLED is true", () => {
+    vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+      signinRedirect: vi.fn(),
+      error: undefined,
+    } as unknown as reactOidcContext.AuthContextProps);
+
+    render(<LoginPage />);
+
+    expect(screen.getByText(/DEMO ACCESS — SIH EVALUATION/i)).toBeInTheDocument();
+    expect(screen.getByText(/Demo accounts are intended for evaluation only/i)).toBeInTheDocument();
+  });
+
+  it("renders all 8 role selectors", () => {
+    vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+      signinRedirect: vi.fn(),
+      error: undefined,
+    } as unknown as reactOidcContext.AuthContextProps);
+
+    render(<LoginPage />);
+
+    expect(DEMO_ROLES.length).toBe(8);
+    for (const roleInfo of DEMO_ROLES) {
+      expect(screen.getByRole("button", { name: roleInfo.label })).toBeInTheDocument();
+    }
+  });
+
+  it("selecting PLANNER populates planner.demo username", () => {
+    vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+      signinRedirect: vi.fn(),
+      error: undefined,
+    } as unknown as reactOidcContext.AuthContextProps);
+
+    render(<LoginPage />);
+
+    const plannerBtn = screen.getByRole("button", { name: "Planner" });
+    fireEvent.click(plannerBtn);
+
+    expect(screen.getByText("planner.demo")).toBeInTheDocument();
+    expect(screen.getByText(/Planning and optimization workflow/i)).toBeInTheDocument();
+  });
+
+  it("selecting APPROVER populates approver.demo username", () => {
+    vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+      signinRedirect: vi.fn(),
+      error: undefined,
+    } as unknown as reactOidcContext.AuthContextProps);
+
+    render(<LoginPage />);
+
+    const approverBtn = screen.getByRole("button", { name: "Approver" });
+    fireEvent.click(approverBtn);
+
+    expect(screen.getByText("approver.demo")).toBeInTheDocument();
+    expect(screen.getByText(/Plan review and approval authority/i)).toBeInTheDocument();
+  });
+
+  it("selecting each remaining role updates username correctly", () => {
+    vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+      signinRedirect: vi.fn(),
+      error: undefined,
+    } as unknown as reactOidcContext.AuthContextProps);
+
+    render(<LoginPage />);
+
+    for (const roleInfo of DEMO_ROLES) {
+      const btn = screen.getByRole("button", { name: roleInfo.label });
+      fireEvent.click(btn);
+      expect(screen.getByText(roleInfo.username)).toBeInTheDocument();
+    }
+  });
+
+  it("password remains masked and no real password is embedded in the DOM", () => {
     vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
       isAuthenticated: false,
       isLoading: false,
@@ -61,8 +152,50 @@ describe("Login Page", () => {
 
     const { container } = render(<LoginPage />);
 
-    expect(container.querySelector('input[type="password"]')).toBeNull();
-    expect(container.querySelector('input[type="text"]')).toBeNull();
+    expect(screen.getByText("••••••••••••••")).toBeInTheDocument();
+    // Confirm no raw demo password is in DOM
+    expect(container.textContent).not.toMatch(/railopt_demo_2026/);
+  });
+
+  it("clicking Enter Demo Workspace triggers signinRedirect with login_hint", () => {
+    const mockSigninRedirect = vi.fn();
+    vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+      signinRedirect: mockSigninRedirect,
+      error: undefined,
+    } as unknown as reactOidcContext.AuthContextProps);
+
+    render(<LoginPage />);
+
+    const plannerBtn = screen.getByRole("button", { name: "Planner" });
+    fireEvent.click(plannerBtn);
+
+    const enterBtn = screen.getByRole("button", { name: /Enter Demo Workspace as Planner/i });
+    expect(enterBtn).toBeInTheDocument();
+
+    fireEvent.click(enterBtn);
+    expect(mockSigninRedirect).toHaveBeenCalledWith({
+      extraQueryParams: {
+        login_hint: "planner.demo",
+      },
+    });
+  });
+
+  it("hides Demo Access section when NEXT_PUBLIC_DEMO_ACCESS_ENABLED is false", () => {
+    process.env = { ...originalEnv, NEXT_PUBLIC_DEMO_ACCESS_ENABLED: "false" };
+
+    vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+      signinRedirect: vi.fn(),
+      error: undefined,
+    } as unknown as reactOidcContext.AuthContextProps);
+
+    render(<LoginPage />);
+
+    expect(screen.queryByText(/DEMO ACCESS — SIH EVALUATION/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /continue with railway sso/i })).toBeInTheDocument();
   });
 
   it("renders authentication error if sign in failed", () => {

@@ -116,16 +116,16 @@ RailOpt AI is loaded with authentic, verified master data from **Howrah Division
 
 The platform enforces strict, deny-by-default role boundaries across 8 railway user profiles:
 
-| Account | Password | Role | Permissions |
+| Account | Credentials | Role | Permissions |
 |---|---|---|---|
-| `admin.demo` | `railopt_demo_2026` | **ADMIN** | Full administrative and operational control across all modules. |
-| `planner.demo` | `railopt_demo_2026` | **PLANNER** | Full access to generate CP-SAT plans, run What-If scenarios, and submit for sign-off. |
-| `control.demo` | `railopt_demo_2026` | **CONTROL** | Section controller access with corridor clearance and solver trigger permissions. |
-| `approver.demo` | `railopt_demo_2026` | **APPROVER** | DRM / Sr. DOM authority: Review optimization runs, approve, or reject with audit notes. |
-| `engineering.demo`| `railopt_demo_2026` | **ENGINEERING** | Civil / Track department: View work orders, assets, and schedule possessions. |
-| `snt.demo` | `railopt_demo_2026` | **SNT** | Signaling & Telecom: View signal defects, interlockings, and integration opps. |
-| `trd.demo` | `railopt_demo_2026` | **TRD** | Traction Distribution: View overhead equipment wear, power blocks, and schedule. |
-| `viewer.demo` | `railopt_demo_2026` | **VIEWER** | Read-only access to published corridor possessions and operational dashboards. |
+| `admin.demo` | `Environment Controlled` | **ADMIN** | Full administrative and operational control across all modules. |
+| `planner.demo` | `Environment Controlled` | **PLANNER** | Full access to generate CP-SAT plans, run What-If scenarios, and submit for sign-off. |
+| `control.demo` | `Environment Controlled` | **CONTROL** | Section controller access with corridor clearance and solver trigger permissions. |
+| `approver.demo` | `Environment Controlled` | **APPROVER** | DRM / Sr. DOM authority: Review optimization runs, approve, or reject with audit notes. |
+| `engineering.demo`| `Environment Controlled` | **ENGINEERING** | Civil / Track department: View work orders, assets, and schedule possessions. |
+| `snt.demo` | `Environment Controlled` | **SNT** | Signaling & Telecom: View signal defects, interlockings, and integration opps. |
+| `trd.demo` | `Environment Controlled` | **TRD** | Traction Distribution: View overhead equipment wear, power blocks, and schedule. |
+| `viewer.demo` | `Environment Controlled` | **VIEWER** | Read-only access to published corridor possessions and operational dashboards. |
 
 ---
 
@@ -210,10 +210,31 @@ python scripts/run_production_smoke_test.py
 
 ---
 
-## 10. Smart India Hackathon (SIH) Live Demo Sequence (2-Minute Walkthrough)
+## 10. Smart India Hackathon (SIH) Demo Access & Evaluation Walkthrough
 
-1. **Login as Planner**:
-   - Open `http://localhost:3000/login` $\rightarrow$ Sign in with `planner.demo` / `railopt_demo_2026`.
+### 8 Dedicated Demo Operational Roles
+RailOpt AI includes 8 pre-configured Keycloak roles for evaluators and teammates:
+
+| Role | Demo Identity | Operational Scope & Authority |
+|---|---|---|
+| **ADMIN** | `admin.demo` | Full administrative control, system settings, and override capabilities. |
+| **PLANNER** | `planner.demo` | Work order consolidation, candidate generation, and OR-Tools CP-SAT plan solving. |
+| **CONTROL** | `control.demo` | Operational corridor monitoring and live train conflict management. |
+| **APPROVER** | `approver.demo` | Divisional Railway Manager (DRM) review, approval authorization, and rejection with audit reasons. |
+| **ENGINEERING** | `engineering.demo` | Civil track maintenance workbench, track settlement repairs, and rail fracture requisitions. |
+| **S&T** | `snt.demo` | Signal & Telecom operations, point machine maintenance, and interlocking inspections. |
+| **TRD** | `trd.demo` | Traction Distribution / Overhead Electrification (OHE) power block management. |
+| **VIEWER** | `viewer.demo` | Read-only operational visibility across all corridors, maps, and calendar views. |
+
+### Demo Access Configuration
+- **Toggle**: Controlled via `DEMO_ACCESS_ENABLED` (backend) / `NEXT_PUBLIC_DEMO_ACCESS_ENABLED` (frontend).
+- **Security Invariant**: Credentials are server/environment-controlled (`DEMO_USER_PASSWORD` in `.env`). No credentials or passwords are hardcoded in the frontend codebase or bundle.
+- **Evaluation Notice**: *Demo accounts are intended for evaluation, SIH judging, and project review only.* Production deployments should keep demo access disabled (`DEMO_ACCESS_ENABLED=false`).
+
+### 2-Minute SIH Live Demo Sequence
+
+1. **Sign In as Planner**:
+   - Open `http://localhost:3000/login` $\rightarrow$ Under **DEMO ACCESS**, select **Planner** (`planner.demo`) $\rightarrow$ Click **Enter Demo Workspace**.
 2. **Command Dashboard**:
    - Review 6 KPI cards. Click **Critical & High** $\rightarrow$ Deep-links directly to `/maintenance?severity=Critical`.
 3. **Maintenance Workbench**:
@@ -237,7 +258,7 @@ python scripts/run_production_smoke_test.py
 9. **Submit for Human Approval**:
    - Click **Submit for Approval** $\rightarrow$ Plan transitions to `SUBMITTED`.
 10. **Approver Sign-off & Audit Trail**:
-    - Sign out and log in as `approver.demo` / `railopt_demo_2026`.
+    - Sign out (with confirmation dialog) and select **Approver** (`approver.demo`).
     - Open the plan $\rightarrow$ Click **Approve Plan**.
     - Verify immutable audit record created with timestamp and DRM actor attribution.
 

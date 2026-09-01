@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     gemini_timeout_seconds: float = 20.0
     gemini_api_base: str = "https://generativelanguage.googleapis.com/v1beta"
 
+    # ── Demo Access Configuration (Evaluation Only) ──────────────
+    demo_access_enabled: bool = False
+    demo_user_password: str | None = None
+
     @property
     def is_development(self) -> bool:
         return self.app_env == "development"

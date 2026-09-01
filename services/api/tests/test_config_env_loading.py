@@ -62,6 +62,18 @@ class TestEnvironmentConfigLoading(unittest.TestCase):
         self.assertIsNone(test_settings.gemini_api_key)
         self.assertEqual(test_settings.llm_provider, "auto")
 
+    def test_06_demo_settings_resolved(self):
+        """6. Demo access configuration parameters are resolved."""
+        self.assertIsInstance(settings.demo_access_enabled, bool)
+        # Verify settings instantiate cleanly with custom demo config
+        custom_settings = Settings(
+            database_url="postgresql+psycopg://user:pass@localhost:5432/db",
+            demo_access_enabled=True,
+            demo_user_password="custom_demo_password",
+        )
+        self.assertTrue(custom_settings.demo_access_enabled)
+        self.assertEqual(custom_settings.demo_user_password, "custom_demo_password")
+
 
 if __name__ == "__main__":
     unittest.main()

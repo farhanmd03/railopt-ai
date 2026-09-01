@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useAuth } from "react-oidc-context";
 import { useRouter } from "next/navigation";
 import {
@@ -13,13 +13,86 @@ import {
   Layers,
   Sparkles,
   CheckCircle2,
+  UserCheck,
+  Lock,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RailOptLogo } from "@/components/brand/railopt-logo";
 
+export interface DemoRoleInfo {
+  role: string;
+  username: string;
+  label: string;
+  description: string;
+  badgeColor: string;
+}
+
+export const DEMO_ROLES: DemoRoleInfo[] = [
+  {
+    role: "ADMIN",
+    username: "admin.demo",
+    label: "Admin",
+    description: "Full administrative access.",
+    badgeColor: "bg-purple-950 text-purple-300 border-purple-800/80",
+  },
+  {
+    role: "PLANNER",
+    username: "planner.demo",
+    label: "Planner",
+    description: "Planning and optimization workflow.",
+    badgeColor: "bg-blue-950 text-blue-300 border-blue-800/80",
+  },
+  {
+    role: "CONTROL",
+    username: "control.demo",
+    label: "Control",
+    description: "Operational control and solver execution.",
+    badgeColor: "bg-indigo-950 text-indigo-300 border-indigo-800/80",
+  },
+  {
+    role: "APPROVER",
+    username: "approver.demo",
+    label: "Approver",
+    description: "Plan review and approval authority.",
+    badgeColor: "bg-emerald-950 text-emerald-300 border-emerald-800/80",
+  },
+  {
+    role: "ENGINEERING",
+    username: "engineering.demo",
+    label: "Engineering",
+    description: "Engineering maintenance workspace.",
+    badgeColor: "bg-amber-950 text-amber-300 border-amber-800/80",
+  },
+  {
+    role: "SNT",
+    username: "snt.demo",
+    label: "S&T",
+    description: "Signal & Telecom operations.",
+    badgeColor: "bg-cyan-950 text-cyan-300 border-cyan-800/80",
+  },
+  {
+    role: "TRD",
+    username: "trd.demo",
+    label: "TRD",
+    description: "Traction / OHE operations.",
+    badgeColor: "bg-orange-950 text-orange-300 border-orange-800/80",
+  },
+  {
+    role: "VIEWER",
+    username: "viewer.demo",
+    label: "Viewer",
+    description: "Read-only operational visibility.",
+    badgeColor: "bg-slate-950 text-slate-300 border-slate-800/80",
+  },
+];
+
 export default function LoginPage() {
   const auth = useAuth();
   const router = useRouter();
+  const [selectedRole, setSelectedRole] = useState<DemoRoleInfo>(DEMO_ROLES[1]); // Default to PLANNER
+
+  const isDemoEnabled = process.env.NEXT_PUBLIC_DEMO_ACCESS_ENABLED === "true";
 
   useEffect(() => {
     if (auth.isAuthenticated) {
@@ -27,11 +100,24 @@ export default function LoginPage() {
     }
   }, [auth.isAuthenticated, router]);
 
-  const handleSignIn = async () => {
+  const handleStandardSignIn = async () => {
     try {
       await auth.signinRedirect();
     } catch (err) {
       console.error("Sign in initialization failed:", err);
+    }
+  };
+
+  const handleDemoSignIn = async (roleInfo: DemoRoleInfo) => {
+    try {
+      // Pass login_hint so Keycloak pre-fills username for evaluator convenience
+      await auth.signinRedirect({
+        extraQueryParams: {
+          login_hint: roleInfo.username,
+        },
+      });
+    } catch (err) {
+      console.error("Demo sign in initialization failed:", err);
     }
   };
 
@@ -109,16 +195,16 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* RIGHT COLUMN: Authentication Card */}
-      <div className="w-full lg:w-[460px] xl:w-[500px] flex items-center justify-center p-6 sm:p-10 lg:p-12 bg-[#080D1A]">
-        <div className="w-full max-w-sm space-y-6">
+      {/* RIGHT COLUMN: Authentication & Demo Access Panel */}
+      <div className="w-full lg:w-[480px] xl:w-[540px] flex items-center justify-center p-6 sm:p-8 lg:p-10 bg-[#080D1A]">
+        <div className="w-full max-w-md space-y-5">
           {/* Card Box */}
-          <div className="rounded-xl border border-slate-800 bg-slate-900/90 shadow-2xl p-7 sm:p-8 backdrop-blur-sm space-y-6">
+          <div className="rounded-xl border border-slate-800 bg-slate-900/90 shadow-2xl p-6 sm:p-7 backdrop-blur-sm space-y-5">
             <div>
               <h2 className="text-xl font-bold tracking-tight text-white">
                 Sign In to Operations
               </h2>
-              <p className="text-xs text-slate-400 mt-1">
+              <p className="text-xs text-slate-400 mt-0.5">
                 Authenticate via Keycloak OpenID Connect Single Sign-On.
               </p>
             </div>
@@ -138,12 +224,12 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* Single SSO Action Button */}
-            <div className="space-y-4">
+            {/* Standard Railway SSO Action Button */}
+            <div className="space-y-3">
               <Button
-                onClick={handleSignIn}
+                onClick={handleStandardSignIn}
                 disabled={auth.isLoading}
-                className="w-full h-12 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold text-sm gap-2.5 shadow-md hover:shadow-lg transition-all cursor-pointer rounded-lg"
+                className="w-full h-11 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold text-xs sm:text-sm gap-2.5 shadow-md hover:shadow-lg transition-all cursor-pointer rounded-lg"
               >
                 {auth.isLoading ? (
                   <>
@@ -159,37 +245,99 @@ export default function LoginPage() {
                 )}
               </Button>
 
-              <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400 pt-1 text-center">
+              <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400 text-center">
                 <Shield className="h-3.5 w-3.5 text-blue-400 shrink-0" />
-                <span>Protected by 8-role Deny-by-Default RBAC.</span>
+                <span>Protected by 8-role Deny-by-Default RBAC</span>
               </div>
             </div>
 
-            {/* Demo Roles Matrix for Evaluators & Judges */}
-            <div className="pt-4 border-t border-slate-800/80 space-y-2">
-              <div className="flex items-center justify-between text-[11px] font-semibold text-slate-400">
-                <span>Evaluator Demo Roles</span>
-                <span className="text-[10px] text-blue-400 font-mono">Password: railopt_demo_2026</span>
+            {/* DEMO ACCESS SECTION (Enabled for SIH Demo & Evaluation) */}
+            {isDemoEnabled && (
+              <div className="pt-4 border-t border-slate-800/80 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
+                      <Zap className="h-3.5 w-3.5 text-blue-400" />
+                      DEMO ACCESS — SIH EVALUATION
+                    </span>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      Select an operational role to pre-configure demo identity
+                    </p>
+                  </div>
+                </div>
+
+                {/* 8-Role Selector Matrix */}
+                <div className="grid grid-cols-4 gap-1.5">
+                  {DEMO_ROLES.map((roleInfo) => {
+                    const isSelected = selectedRole.role === roleInfo.role;
+                    return (
+                      <button
+                        key={roleInfo.role}
+                        type="button"
+                        onClick={() => setSelectedRole(roleInfo)}
+                        className={`p-2 rounded-lg text-center transition-all cursor-pointer border text-xs font-semibold ${
+                          isSelected
+                            ? "bg-blue-600/30 border-blue-500 text-white shadow-xs ring-1 ring-blue-400/50"
+                            : "bg-slate-950/60 border-slate-800/80 text-slate-300 hover:bg-slate-800/60 hover:text-white"
+                        }`}
+                        title={`${roleInfo.label}: ${roleInfo.description}`}
+                      >
+                        <span className="block text-[11px] font-bold">{roleInfo.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Selected Role Card */}
+                <div className="p-3.5 rounded-lg bg-slate-950/80 border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <UserCheck className="h-4 w-4 text-blue-400" />
+                      <span className="text-xs font-bold text-white">
+                        {selectedRole.label} Role Selected
+                      </span>
+                    </div>
+                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${selectedRole.badgeColor}`}>
+                      {selectedRole.role}
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-300">
+                    {selectedRole.description}
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div className="space-y-1">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">Username</span>
+                      <div className="px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-xs font-mono text-slate-200 select-all">
+                        {selectedRole.username}
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">Password</span>
+                      <div className="px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-xs font-mono text-slate-400 flex items-center justify-between">
+                        <span className="tracking-widest">••••••••••••••</span>
+                        <Lock className="h-3 w-3 text-slate-500" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <Button
+                    onClick={() => handleDemoSignIn(selectedRole)}
+                    disabled={auth.isLoading}
+                    variant="outline"
+                    className="w-full h-9 mt-1 bg-blue-950/60 hover:bg-blue-900/80 border-blue-700/60 text-blue-200 hover:text-white text-xs font-semibold gap-2 transition-all cursor-pointer rounded-lg"
+                  >
+                    <span>Enter Demo Workspace as {selectedRole.label}</span>
+                    <ArrowRight className="h-3.5 w-3.5 ml-auto" />
+                  </Button>
+                </div>
+
+                <p className="text-center text-[10px] text-amber-400/90 font-medium">
+                  * Demo accounts are intended for evaluation only.
+                </p>
               </div>
-              <div className="grid grid-cols-2 gap-1.5 text-[10px] text-slate-300">
-                <div className="p-1.5 rounded bg-slate-950/60 border border-slate-800/80">
-                  <span className="font-bold text-white block">planner.demo</span>
-                  <span className="text-slate-400">Plan &amp; Solve</span>
-                </div>
-                <div className="p-1.5 rounded bg-slate-950/60 border border-slate-800/80">
-                  <span className="font-bold text-white block">approver.demo</span>
-                  <span className="text-slate-400">DRM Sign-off</span>
-                </div>
-                <div className="p-1.5 rounded bg-slate-950/60 border border-slate-800/80">
-                  <span className="font-bold text-white block">control.demo</span>
-                  <span className="text-slate-400">Section Control</span>
-                </div>
-                <div className="p-1.5 rounded bg-slate-950/60 border border-slate-800/80">
-                  <span className="font-bold text-white block">viewer.demo</span>
-                  <span className="text-slate-400">Read-Only</span>
-                </div>
-              </div>
-            </div>
+            )}
           </div>
 
           <p className="text-center text-[10px] text-slate-400 leading-tight">
