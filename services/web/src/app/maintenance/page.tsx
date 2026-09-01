@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { Suspense, useMemo, useState, useEffect } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "react-oidc-context";
 import { buildAuthUser } from "@/lib/auth-config";
@@ -12,6 +13,7 @@ import { MaintenanceSummaryStrip } from "@/components/maintenance/maintenance-su
 import { MaintenanceFilters, MaintenanceFilterState } from "@/components/maintenance/maintenance-filters";
 import { MaintenanceTable } from "@/components/maintenance/maintenance-table";
 import { TaskDetailDrawer } from "@/components/maintenance/task-detail-drawer";
+import { LoadingState } from "@/components/feedback/loading-state";
 import { Button } from "@/components/ui/button";
 import { ArrowUpRight, Calendar, Cpu, RefreshCw, TramFront, User as UserIcon, Wrench } from "lucide-react";
 
@@ -24,12 +26,51 @@ const INITIAL_FILTERS: MaintenanceFilterState = {
   overdueOnly: false,
 };
 
-export default function MaintenancePage() {
+function MaintenanceContent() {
   const auth = useAuth();
   const user = buildAuthUser(auth.user);
   const queryClient = useQueryClient();
+  const searchParams = useSearchParams();
 
-  const [filters, setFilters] = useState<MaintenanceFilterState>(INITIAL_FILTERS);
+  // Read initial URL query parameters safely
+  const paramSeverity = searchParams?.get("severity") || "";
+  const paramDept = searchParams?.get("department") || "";
+  const paramSection =
+    searchParams?.get("section_id") || searchParams?.get("section") || searchParams?.get("sectionId") || "";
+  const paramStatus = searchParams?.get("status") || "";
+  const paramOverdue = searchParams?.get("overdue") === "true";
+  const paramSearch = searchParams?.get("search") || "";
+
+  let initialSeverity = paramSeverity;
+  if (paramSeverity.toLowerCase() === "critical") initialSeverity = "Critical";
+  else if (paramSeverity.toLowerCase() === "high") initialSeverity = "High";
+  else if (paramSeverity.toLowerCase() === "medium") initialSeverity = "Medium";
+  else if (paramSeverity.toLowerCase() === "low") initialSeverity = "Low";
+
+  const [filters, setFilters] = useState<MaintenanceFilterState>({
+    search: paramSearch,
+    department: paramDept,
+    severity: initialSeverity,
+    status: paramStatus,
+    sectionId: paramSection,
+    overdueOnly: paramOverdue,
+  });
+
+  // Sync state if searchParams change dynamically
+  useEffect(() => {
+    if (paramSeverity || paramDept || paramSection || paramStatus || paramOverdue || paramSearch) {
+      setFilters({
+        search: paramSearch,
+        department: paramDept,
+        severity: initialSeverity,
+        status: paramStatus,
+        sectionId: paramSection,
+        overdueOnly: paramOverdue,
+      });
+      setPage(1);
+    }
+  }, [paramSeverity, paramDept, paramSection, paramStatus, paramOverdue, paramSearch, initialSeverity]);
+
   const [page, setPage] = useState<number>(1);
   const pageSize = 15;
 
@@ -245,5 +286,13 @@ export default function MaintenancePage() {
         onClose={() => setIsDrawerOpen(false)}
       />
     </div>
+  );
+}
+
+export default function MaintenancePage() {
+  return (
+    <Suspense fallback={<LoadingState message="Loading Maintenance Workbench..." />}>
+      <MaintenanceContent />
+    </Suspense>
   );
 }

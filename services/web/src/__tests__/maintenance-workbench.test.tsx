@@ -13,6 +13,7 @@ vi.mock("next/navigation", () => ({
     push: vi.fn(),
     replace: vi.fn(),
   }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock("react-oidc-context", () => ({

@@ -1,7 +1,9 @@
 import React from "react";
+import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { EmptyState } from "@/components/feedback/empty-state";
-import { FileText } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { FileText, ArrowUpRight } from "lucide-react";
 
 export default function AuditPage() {
   return (
@@ -12,8 +14,16 @@ export default function AuditPage() {
       />
       <EmptyState
         title="Audit & Compliance Logs"
-        description="Complete provenance and decision audit trail console will be available here in Batch 8."
+        description="Every optimization run maintains an immutable audit trail of solver runtime parameters and approval history."
         icon={<FileText className="h-6 w-6" />}
+        action={
+          <Link href="/optimization">
+            <Button size="sm" className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white">
+              <span>View Run Audit Records</span>
+              <ArrowUpRight className="h-3.5 w-3.5" />
+            </Button>
+          </Link>
+        }
       />
     </div>
   );
