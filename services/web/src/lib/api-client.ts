@@ -9,7 +9,9 @@
 import { ApiError } from "./types/api";
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") || "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/v1\/?$/, "")?.replace(/\/+$/, "") ||
+  "http://localhost:8000";
 
 let authTokenGetter: (() => string | null) | null = null;
 

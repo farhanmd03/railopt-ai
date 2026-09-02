@@ -75,7 +75,7 @@ export function LogoutDialog({
               id="logout-dialog-description"
               className="text-xs text-muted-foreground mt-1.5 leading-relaxed"
             >
-              {userName ? `User "${userName}", your` : "Your"} active operational session will be ended. You will need to sign in again via Keycloak OIDC to access Howrah Division planning workspaces.
+              {userName ? `User "${userName}", your` : "Your"} active operational session will be ended. You will need to sign in again via OpenID Connect to access Howrah Division planning workspaces.
             </p>
           </div>
         </div>

@@ -1,11 +1,11 @@
 /**
- * RailOpt AI — Keycloak OIDC Authentication Configuration for Next.js.
+ * RailOpt AI — Auth0 OIDC Authentication Configuration for Next.js.
  *
- * Real browser OIDC Authorization Code Flow with PKCE against local Keycloak.
+ * Real browser OIDC Authorization Code Flow with PKCE against Auth0.
  */
 
 import { AuthProviderProps } from "react-oidc-context";
-import { User, WebStorageStateStore } from "oidc-client-ts";
+import { User, UserManager, WebStorageStateStore } from "oidc-client-ts";
 
 export interface AuthUser {
   id: string;
@@ -30,24 +30,14 @@ export const APP_ROLES = [
 
 export type AppRole = (typeof APP_ROLES)[number];
 
-export const OIDC_ISSUER_URL =
-  process.env.NEXT_PUBLIC_OIDC_ISSUER_URL?.replace(/\/+$/, "") ||
-  (process.env.NEXT_PUBLIC_AUTH0_DOMAIN
-    ? (process.env.NEXT_PUBLIC_AUTH0_DOMAIN.startsWith("http")
-        ? process.env.NEXT_PUBLIC_AUTH0_DOMAIN.replace(/\/+$/, "")
-        : `https://${process.env.NEXT_PUBLIC_AUTH0_DOMAIN.replace(/\/+$/, "")}`)
-    : "") ||
-  (process.env.NEXT_PUBLIC_KEYCLOAK_URL
-    ? `${process.env.NEXT_PUBLIC_KEYCLOAK_URL.replace(/\/+$/, "")}/realms/${process.env.NEXT_PUBLIC_KEYCLOAK_REALM || "railopt"}`
-    : "http://localhost:8080/realms/railopt");
+// Auth0 requires the issuer URL to have exactly one trailing slash
+const rawIssuer = process.env.NEXT_PUBLIC_OIDC_ISSUER_URL || "https://farhanmd03.us.auth0.com/";
+export const OIDC_ISSUER_URL = rawIssuer.endsWith("/") ? rawIssuer : `${rawIssuer}/`;
 
-export const OIDC_CLIENT_ID =
-  process.env.NEXT_PUBLIC_OIDC_CLIENT_ID ||
-  process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID ||
-  "railopt-web";
+export const OIDC_CLIENT_ID = process.env.NEXT_PUBLIC_OIDC_CLIENT_ID || "ARUiG1mbMmmzOi6TK3t5wrFY8otx5prl";
 
-export const OIDC_AUDIENCE =
-  process.env.NEXT_PUBLIC_OIDC_AUDIENCE || "https://railopt-ai-api";
+// Auth0 API Identifier
+export const OIDC_AUDIENCE = process.env.NEXT_PUBLIC_OIDC_AUDIENCE || "https://railopt-ai-api";
 
 export const OIDC_CONFIG = {
   authority: OIDC_ISSUER_URL,
@@ -62,87 +52,170 @@ export const OIDC_CONFIG = {
       : "http://localhost:3000/login",
   response_type: "code",
   scope: "openid profile email",
+
+  // CRITICAL: Auth0 audience must be passed in extraQueryParams for oidc-client-ts
   extraQueryParams: {
     audience: OIDC_AUDIENCE,
   },
+
   automaticSilentRenew: true,
   loadUserInfo: true,
 } as const;
 
-/**
- * Validates that a return URL is a safe, same-origin, internal path.
- * Rejects absolute URLs, protocol-relative URLs, and anything not
- * starting with a single "/".
- */
 export function sanitizeReturnUrl(url: string | null | undefined): string {
   if (!url) return "/dashboard";
-  // Reject protocol-relative ("//host/...") and any URL containing a
-  // scheme (e.g. "javascript:", "https:"). A safe internal path must
-  // start with exactly one "/" and not two.
+
   if (!url.startsWith("/") || url.startsWith("//")) {
     return "/dashboard";
   }
-  // Reject anything that still parses as an absolute URL when resolved
-  // against window.location.origin, as a defense-in-depth check.
+
   try {
     const origin =
       typeof window !== "undefined" && window.location?.origin
         ? window.location.origin
         : "http://localhost:3000";
+
     const resolved = new URL(url, origin);
+
     if (resolved.origin !== origin) {
       return "/dashboard";
     }
   } catch {
     return "/dashboard";
   }
+
   return url;
 }
 
+let sharedUserManager: UserManager | null = null;
+
+export function getSharedUserManager(): UserManager {
+  if (typeof window === "undefined") {
+    throw new Error("UserManager is only available in browser environments");
+  }
+  if (!sharedUserManager) {
+    sharedUserManager = new UserManager({
+      authority: OIDC_ISSUER_URL,
+      client_id: OIDC_CLIENT_ID,
+      redirect_uri: `${window.location.origin}/auth/callback`,
+      post_logout_redirect_uri: `${window.location.origin}/login`,
+      response_type: "code",
+      scope: "openid profile email",
+      extraQueryParams: {
+        audience: OIDC_AUDIENCE,
+      },
+      automaticSilentRenew: true,
+      userStore: new WebStorageStateStore({
+        store: window.sessionStorage,
+      }),
+    });
+  }
+  return sharedUserManager;
+}
+
 export function getOidcConfig(): AuthProviderProps {
+  if (typeof window !== "undefined") {
+    const userManager = getSharedUserManager();
+    return {
+      userManager,
+      onSigninCallback: () => {
+        const rawReturnUrl = window.sessionStorage.getItem("railopt_auth_return_url");
+        const returnUrl = sanitizeReturnUrl(rawReturnUrl);
+        window.sessionStorage.removeItem("railopt_auth_return_url");
+        window.location.replace(returnUrl);
+      },
+    };
+  }
+
   return {
     authority: OIDC_ISSUER_URL,
     client_id: OIDC_CLIENT_ID,
-    redirect_uri:
-      typeof window !== "undefined"
-        ? `${window.location.origin}/auth/callback`
-        : "http://localhost:3000/auth/callback",
-    post_logout_redirect_uri:
-      typeof window !== "undefined"
-        ? `${window.location.origin}/login`
-        : "http://localhost:3000/login",
+    redirect_uri: "http://localhost:3000/auth/callback",
+    post_logout_redirect_uri: "http://localhost:3000/login",
     response_type: "code",
     scope: "openid profile email",
     extraQueryParams: {
       audience: OIDC_AUDIENCE,
     },
     automaticSilentRenew: true,
-    userStore:
-      typeof window !== "undefined"
-        ? new WebStorageStateStore({ store: window.sessionStorage })
-        : undefined,
-    onSigninCallback: () => {
-      if (typeof window !== "undefined") {
-        const rawReturnUrl = window.sessionStorage.getItem("railopt_auth_return_url");
-        const returnUrl = sanitizeReturnUrl(rawReturnUrl);
-        window.sessionStorage.removeItem("railopt_auth_return_url");
-        window.location.replace(returnUrl);
-      }
-    },
   };
 }
 
-/**
- * Safely decodes an unencrypted JWT payload without external libraries.
- */
+export interface DemoSessionPayload {
+  access_token: string;
+  token_type?: string;
+  expires_in: number;
+  user: {
+    sub: string;
+    preferred_username: string;
+    name: string;
+    email: string;
+    roles: string[];
+  };
+}
+
+export async function setDemoUserSession(data: {
+  access_token: string;
+  token_type?: string;
+  expires_in: number;
+  user: {
+    sub: string;
+    preferred_username: string;
+    name: string;
+    email: string;
+    roles: string[];
+  };
+}): Promise<User> {
+  const now = Math.floor(Date.now() / 1000);
+  const expiresAt = now + (data.expires_in || 28800);
+  // Construct genuine User session with demo access_token.
+  // We explicitly omit id_token so the demo JWT never masquerades as an OIDC ID token.
+  // The API token getter in providers.tsx strictly reads user.access_token.
+  const demoUser = new User({
+    access_token: data.access_token,
+    token_type: data.token_type || "Bearer",
+    scope: "openid profile email",
+    profile: {
+      iss: "railopt-demo",
+      aud: OIDC_AUDIENCE,
+      sub: data.user.sub,
+      preferred_username: data.user.preferred_username,
+      name: data.user.name,
+      email: data.user.email,
+      "https://railopt.ai/roles": data.user.roles,
+      roles: data.user.roles,
+      exp: expiresAt,
+      iat: now,
+    },
+    expires_at: expiresAt,
+  });
+
+  const userManager = getSharedUserManager();
+  await userManager.storeUser(demoUser);
+  await userManager.events.load(demoUser);
+  return demoUser;
+}
+
+export function isDemoSession(user: User | null | undefined): boolean {
+  if (!user) return false;
+  const iss = (user.profile as Record<string, unknown>)?.iss;
+  const sub = user.profile?.sub || "";
+  return iss === "railopt-demo" || sub.startsWith("demo|");
+}
+
 export function parseJwtPayload(token: string | null | undefined): Record<string, unknown> | null {
-  if (!token || typeof token !== "string") return null;
+  if (!token || typeof token !== "string") {
+    return null;
+  }
+
   try {
     const parts = token.split(".");
     if (parts.length < 2) return null;
+
     const base64Url = parts[1];
     const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
     const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+
     const jsonStr =
       typeof window !== "undefined" && typeof window.atob === "function"
         ? decodeURIComponent(
@@ -153,28 +226,22 @@ export function parseJwtPayload(token: string | null | undefined): Record<string
               .join("")
           )
         : Buffer.from(padded, "base64").toString("utf-8");
+
     return JSON.parse(jsonStr);
   } catch {
     return null;
   }
 }
 
-/**
- * Extract authenticated roles from OIDC token payload (Auth0 namespaced / Keycloak / generic).
- * Inspects both ID Token profile and Access Token claims.
- * Strictly whitelists against approved APP_ROLES.
- */
 export function extractRoles(user: User | null | undefined): AppRole[] {
-  if (!user) {
-    return [];
-  }
+  if (!user) return [];
 
   const extracted = new Set<string>();
 
   const processPayload = (payload: Record<string, unknown> | null | undefined) => {
     if (!payload || typeof payload !== "object") return;
 
-    // 1. Check Auth0 namespaced claim (https://railopt.ai/roles)
+    // 1. Auth0 Namespaced Custom Claim
     const auth0Roles = payload["https://railopt.ai/roles"];
     if (Array.isArray(auth0Roles)) {
       auth0Roles.forEach((r) => {
@@ -182,7 +249,7 @@ export function extractRoles(user: User | null | undefined): AppRole[] {
       });
     }
 
-    // 2. Check direct top-level roles/groups/permissions claims
+    // 2. Generic roles/groups claim fallback
     for (const key of ["roles", "groups", "permissions"]) {
       const claim = payload[key];
       if (Array.isArray(claim)) {
@@ -192,15 +259,13 @@ export function extractRoles(user: User | null | undefined): AppRole[] {
       }
     }
 
-    // 3. Check Keycloak realm_access.roles
+    // 3. Legacy Keycloak fallbacks (preservation)
     const realmAccess = payload.realm_access as { roles?: string[] } | undefined;
     if (realmAccess?.roles && Array.isArray(realmAccess.roles)) {
       realmAccess.roles.forEach((r) => {
         if (typeof r === "string") extracted.add(r.toUpperCase());
       });
     }
-
-    // 4. Check Keycloak resource_access[client_id].roles
     const resourceAccess = payload.resource_access as Record<string, { roles?: string[] }> | undefined;
     if (resourceAccess && typeof resourceAccess === "object") {
       const clientAccess = resourceAccess[OIDC_CLIENT_ID] || resourceAccess["railopt-web"];
@@ -212,12 +277,10 @@ export function extractRoles(user: User | null | undefined): AppRole[] {
     }
   };
 
-  // 1. Inspect user.profile (ID Token & UserInfo claims)
   if (user.profile) {
     processPayload(user.profile as Record<string, unknown>);
   }
 
-  // 2. Inspect user.access_token (OAuth2 Access Token claims)
   if (user.access_token) {
     const accessTokenClaims = parseJwtPayload(user.access_token);
     if (accessTokenClaims) {
@@ -228,9 +291,6 @@ export function extractRoles(user: User | null | undefined): AppRole[] {
   return APP_ROLES.filter((role) => extracted.has(role));
 }
 
-/**
- * Build clean AuthUser identity from OIDC user object.
- */
 export function buildAuthUser(user: User | null | undefined): AuthUser | null {
   if (!user) return null;
 
@@ -238,7 +298,9 @@ export function buildAuthUser(user: User | null | undefined): AuthUser | null {
   const roles = extractRoles(user);
   const firstName = String(profile.given_name || profile.firstName || "");
   const lastName = String(profile.family_name || profile.lastName || "");
-  const username = String(profile.preferred_username || user.profile.sub || "User");
+  // Preferred username, nickname, email, or sub
+  const username = String(profile.preferred_username || profile.nickname || profile.email || user.profile.sub || "User");
+
   const name =
     firstName || lastName
       ? `${firstName} ${lastName}`.trim()
@@ -263,10 +325,6 @@ export function hasAnyRole(roles: string[], targetRoles: AppRole[]): boolean {
   return targetRoles.some((r) => roles.includes(r));
 }
 
-/**
- * Role-Aware Route Visibility Mapping (UX Only).
- * Backend REST API remains the authoritative security enforcement.
- */
 export const ROLE_ROUTE_PERMISSIONS: Record<string, AppRole[]> = {
   "/dashboard": ["ADMIN", "PLANNER", "ENGINEERING", "SNT", "TRD", "CONTROL", "APPROVER", "VIEWER"],
   "/maintenance": ["ADMIN", "PLANNER", "ENGINEERING", "SNT", "TRD"],
@@ -279,18 +337,15 @@ export const ROLE_ROUTE_PERMISSIONS: Record<string, AppRole[]> = {
 };
 
 export function isRouteAllowedForRoles(pathname: string, roles: AppRole[]): boolean {
-  // ADMIN has full visibility
   if (roles.includes("ADMIN")) {
     return true;
   }
 
-  // Exact or prefix match
   const matchedRoute = Object.keys(ROLE_ROUTE_PERMISSIONS).find(
     (route) => pathname === route || pathname.startsWith(`${route}/`)
   );
 
   if (!matchedRoute) {
-    // Default safe fallback: allow dashboard
     return pathname === "/dashboard" || pathname === "/";
   }
 

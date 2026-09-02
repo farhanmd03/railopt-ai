@@ -72,16 +72,51 @@ class TokenVerifier:
     def verify_token(self, token: str) -> dict[str, Any]:
         """Cryptographically verify token signature, issuer, expiry, and target audience."""
         try:
-            jwks_client = self.get_jwks_client()
-            signing_key = jwks_client.get_signing_key_from_jwt(token)
-
-            # First decode to inspect issuer without strict single-string enforcement
+            # First decode to inspect issuer and algorithm without strict signature verification
             unverified_claims = jwt.decode(token, options={"verify_signature": False})
             issuer = unverified_claims.get("iss")
 
+            # ── Branch 1: Demo Token Authentication (HS256 server-issued) ──
+            if issuer == settings.demo_jwt_issuer:
+                if not settings.demo_access_enabled:
+                    logger.warning("Rejected demo token: demo access is disabled on this environment")
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Demo access is disabled on this environment",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                payload = jwt.decode(
+                    token,
+                    settings.demo_jwt_secret,
+                    algorithms=["HS256"],
+                    issuer=settings.demo_jwt_issuer,
+                    leeway=10,
+                    options={
+                        "verify_signature": True,
+                        "verify_exp": True,
+                        "verify_iss": True,
+                        "verify_aud": False,
+                    },
+                )
+
+                # Verify target audience for demo token
+                aud = payload.get("aud")
+                expected_aud = settings.effective_oidc_audience
+                valid_aud = (isinstance(aud, list) and expected_aud in aud) or (aud == expected_aud)
+                if not valid_aud:
+                    logger.warning("Demo token audience mismatch: aud=%s, expected=%s", aud, expected_aud)
+                    raise InvalidTokenError("Demo token audience mismatch")
+
+                return payload
+
+            # ── Branch 2: Standard Auth0 / OIDC Provider (RS256 JWKS) ──
             if issuer not in self.valid_issuers:
                 logger.warning("Token issuer '%s' not in valid issuers %s", issuer, self.valid_issuers)
                 raise InvalidTokenError(f"Invalid token issuer: {issuer}")
+
+            jwks_client = self.get_jwks_client()
+            signing_key = jwks_client.get_signing_key_from_jwt(token)
 
             payload = jwt.decode(
                 token,
@@ -132,6 +167,8 @@ class TokenVerifier:
 
             return payload
 
+        except HTTPException:
+            raise
         except ExpiredSignatureError as exc:
             logger.info("Token verification failed: token expired")
             raise HTTPException(

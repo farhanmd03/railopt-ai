@@ -6,7 +6,7 @@ No secrets are hardcoded — all sensitive values come from the environment.
 
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -146,6 +146,22 @@ class Settings(BaseSettings):
     # ── Demo Access Configuration (Evaluation Only) ──────────────
     demo_access_enabled: bool = False
     demo_user_password: str | None = None
+    demo_jwt_secret: str = "railopt-demo-secret-key-do-not-use-in-production-without-env"
+    demo_jwt_issuer: str = "railopt-demo"
+    demo_jwt_expiry_seconds: int = 28800  # 8 hours for evaluation session
+
+    @model_validator(mode="after")
+    def _validate_production_demo_secret(self) -> "Settings":
+        """Enforce strong non-default DEMO_JWT_SECRET in production environments."""
+        insecure_default = "railopt-demo-secret-key-do-not-use-in-production-without-env"
+        if self.demo_access_enabled and not self.is_development:
+            if not self.demo_jwt_secret or self.demo_jwt_secret == insecure_default or len(self.demo_jwt_secret) < 32:
+                raise ValueError(
+                    "Production startup rejected: DEMO_ACCESS_ENABLED=true in non-development environment, "
+                    "but DEMO_JWT_SECRET is missing, set to the insecure default, or shorter than 32 characters. "
+                    "Configure a strong DEMO_JWT_SECRET on the server."
+                )
+        return self
 
     @property
     def is_development(self) -> bool:

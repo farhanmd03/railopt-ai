@@ -19,7 +19,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RailOptLogo } from "@/components/brand/railopt-logo";
-import { OIDC_AUDIENCE } from "@/lib/auth-config";
+import { apiClient } from "@/lib/api-client";
+import { setDemoUserSession, sanitizeReturnUrl } from "@/lib/auth-config";
 
 export interface DemoRoleInfo {
   role: string;
@@ -93,7 +94,11 @@ export default function LoginPage() {
   const router = useRouter();
   const [selectedRole, setSelectedRole] = useState<DemoRoleInfo>(DEMO_ROLES[1]); // Default to PLANNER
 
-  const isDemoEnabled = process.env.NEXT_PUBLIC_DEMO_ACCESS_ENABLED === "true";
+  // Default demo access to enabled for SIH evaluation/deployment unless explicitly set to 'false'
+  const isDemoEnabled = process.env.NEXT_PUBLIC_DEMO_ACCESS_ENABLED !== "false";
+
+  const [demoLoading, setDemoLoading] = useState(false);
+  const [demoError, setDemoError] = useState<string | null>(null);
 
   useEffect(() => {
     if (auth.isAuthenticated) {
@@ -103,6 +108,7 @@ export default function LoginPage() {
 
   const handleStandardSignIn = async () => {
     try {
+      setDemoError(null);
       await auth.signinRedirect();
     } catch (err) {
       console.error("Sign in initialization failed:", err);
@@ -111,15 +117,45 @@ export default function LoginPage() {
 
   const handleDemoSignIn = async (roleInfo: DemoRoleInfo) => {
     try {
-      // Pass login_hint so Auth0 / Keycloak pre-fills username, plus target audience
-      await auth.signinRedirect({
-        extraQueryParams: {
-          login_hint: roleInfo.username,
-          audience: OIDC_AUDIENCE,
-        },
+      setDemoLoading(true);
+      setDemoError(null);
+
+      // Call the backend demo-token endpoint without sending any passwords
+      const tokenResponse = await apiClient<{
+        access_token: string;
+        token_type: string;
+        expires_in: number;
+        user: {
+          sub: string;
+          preferred_username: string;
+          name: string;
+          email: string;
+          roles: string[];
+        };
+      }>("/api/v1/auth/demo-token", {
+        method: "POST",
+        body: JSON.stringify({
+          role: roleInfo.role,
+        }),
       });
-    } catch (err) {
-      console.error("Demo sign in initialization failed:", err);
+
+      // Synchronize genuine OIDC User session into UserManager and sessionStorage
+      await setDemoUserSession(tokenResponse);
+
+      const rawReturnUrl = typeof window !== "undefined"
+        ? window.sessionStorage.getItem("railopt_auth_return_url")
+        : null;
+      const targetUrl = sanitizeReturnUrl(rawReturnUrl);
+      if (typeof window !== "undefined") {
+        window.sessionStorage.removeItem("railopt_auth_return_url");
+      }
+      router.replace(targetUrl);
+    } catch (err: unknown) {
+      console.error("Demo sign in failed:", err);
+      const msg = err instanceof Error ? err.message : "Failed to acquire demo session token";
+      setDemoError(msg);
+    } finally {
+      setDemoLoading(false);
     }
   };
 
@@ -207,7 +243,7 @@ export default function LoginPage() {
                 Sign In to Operations
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Authenticate via Keycloak OpenID Connect Single Sign-On.
+                Authenticate via OpenID Connect Single Sign-On.
               </p>
             </div>
 
@@ -220,7 +256,7 @@ export default function LoginPage() {
                     Authentication Error
                   </span>
                   <span className="text-[11px] text-red-400">
-                    {auth.error.message || "Failed to establish secure session with Keycloak."}
+                    {auth.error.message || "Failed to establish secure session with OIDC provider."}
                   </span>
                 </div>
               </div>
@@ -236,7 +272,7 @@ export default function LoginPage() {
                 {auth.isLoading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Connecting to Keycloak...</span>
+                    <span>Connecting to SSO...</span>
                   </>
                 ) : (
                   <>
@@ -324,14 +360,30 @@ export default function LoginPage() {
                     </div>
                   </div>
 
+                  {demoError && (
+                    <div className="p-2.5 rounded-lg border border-red-800 bg-red-950/80 text-red-200 text-xs flex items-start gap-2">
+                      <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
+                      <span className="text-[11px] text-red-300">{demoError}</span>
+                    </div>
+                  )}
+
                   <Button
                     onClick={() => handleDemoSignIn(selectedRole)}
-                    disabled={auth.isLoading}
+                    disabled={auth.isLoading || demoLoading}
                     variant="outline"
                     className="w-full h-9 mt-1 bg-blue-950/60 hover:bg-blue-900/80 border-blue-700/60 text-blue-200 hover:text-white text-xs font-semibold gap-2 transition-all cursor-pointer rounded-lg"
                   >
-                    <span>Enter Demo Workspace as {selectedRole.label}</span>
-                    <ArrowRight className="h-3.5 w-3.5 ml-auto" />
+                    {demoLoading ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>Initializing {selectedRole.label} Session...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Enter Demo Workspace as {selectedRole.label}</span>
+                        <ArrowRight className="h-3.5 w-3.5 ml-auto" />
+                      </>
+                    )}
                   </Button>
                 </div>
 

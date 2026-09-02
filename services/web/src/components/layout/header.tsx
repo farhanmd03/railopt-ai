@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { User as UserIcon, Menu, Bell, Shield, LogOut, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "react-oidc-context";
-import { buildAuthUser } from "@/lib/auth-config";
+import { buildAuthUser, isDemoSession } from "@/lib/auth-config";
 import { LogoutDialog } from "@/components/auth/logout-dialog";
 import { RailOptLogo } from "@/components/brand/railopt-logo";
 
@@ -20,12 +20,17 @@ export function Header({ onToggleMobileNav }: HeaderProps) {
 
   const handleConfirmLogout = async () => {
     setShowLogoutDialog(false);
+    if (isDemoSession(auth.user)) {
+      await auth.removeUser();
+      window.location.href = "/login";
+      return;
+    }
     try {
       await auth.signoutRedirect({
         post_logout_redirect_uri: window.location.origin + "/login",
       });
     } catch {
-      auth.removeUser();
+      await auth.removeUser();
       window.location.href = "/login";
     }
   };

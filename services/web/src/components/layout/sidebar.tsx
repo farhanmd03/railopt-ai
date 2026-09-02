@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "react-oidc-context";
-import { extractRoles, isRouteAllowedForRoles } from "@/lib/auth-config";
+import { extractRoles, isRouteAllowedForRoles, isDemoSession } from "@/lib/auth-config";
 import { RailOptLogo } from "@/components/brand/railopt-logo";
 import { LogoutDialog } from "@/components/auth/logout-dialog";
 
@@ -78,12 +78,17 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
 
   const handleConfirmLogout = async () => {
     setShowLogoutDialog(false);
+    if (isDemoSession(auth.user)) {
+      await auth.removeUser();
+      window.location.href = "/login";
+      return;
+    }
     try {
       await auth.signoutRedirect({
         post_logout_redirect_uri: window.location.origin + "/login",
       });
     } catch {
-      auth.removeUser();
+      await auth.removeUser();
       window.location.href = "/login";
     }
   };

@@ -38,7 +38,7 @@ export default function AuthCallbackPage() {
               Authentication Failed
             </h2>
             <p className="text-xs text-slate-400 mt-1">
-              {auth.error.message || "Failed to complete token exchange with Keycloak."}
+              {auth.error.message || "Failed to complete token exchange with OpenID Connect provider."}
             </p>
           </div>
           <Link href="/login" className="inline-block w-full">
@@ -59,7 +59,7 @@ export default function AuthCallbackPage() {
           Authenticating with RailOpt AI...
         </p>
         <p className="text-xs text-slate-400 mt-0.5">
-          Securing session with Keycloak OIDC provider.
+          Securing session with OpenID Connect provider.
         </p>
       </div>
     </div>

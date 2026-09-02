@@ -157,14 +157,31 @@ describe("Login Page & 8-Role Demo Access", () => {
     expect(container.textContent).not.toMatch(/railopt_demo_2026/);
   });
 
-  it("clicking Enter Demo Workspace triggers signinRedirect with login_hint", () => {
-    const mockSigninRedirect = vi.fn();
+  it("clicking Enter Demo Workspace acquires demo token and stores demo session", async () => {
     vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
       isAuthenticated: false,
       isLoading: false,
-      signinRedirect: mockSigninRedirect,
+      signinRedirect: vi.fn(),
       error: undefined,
     } as unknown as reactOidcContext.AuthContextProps);
+
+    // Mock apiClient and setDemoUserSession
+    const authConfig = await import("@/lib/auth-config");
+    const setDemoSessionSpy = vi.spyOn(authConfig, "setDemoUserSession").mockResolvedValue({} as any);
+
+    const apiClientModule = await import("@/lib/api-client");
+    const apiClientSpy = vi.spyOn(apiClientModule, "apiClient").mockResolvedValue({
+      access_token: "mock-demo-jwt",
+      token_type: "Bearer",
+      expires_in: 28800,
+      user: {
+        sub: "demo|planner",
+        preferred_username: "planner.demo",
+        name: "Planner User",
+        email: "planner.demo@railopt.local",
+        roles: ["PLANNER"],
+      },
+    });
 
     render(<LoginPage />);
 
@@ -175,11 +192,10 @@ describe("Login Page & 8-Role Demo Access", () => {
     expect(enterBtn).toBeInTheDocument();
 
     fireEvent.click(enterBtn);
-    expect(mockSigninRedirect).toHaveBeenCalledWith({
-      extraQueryParams: {
-        login_hint: "planner.demo",
-        audience: "https://railopt-ai-api",
-      },
+
+    expect(apiClientSpy).toHaveBeenCalledWith("/api/v1/auth/demo-token", {
+      method: "POST",
+      body: JSON.stringify({ role: "PLANNER" }),
     });
   });
 
