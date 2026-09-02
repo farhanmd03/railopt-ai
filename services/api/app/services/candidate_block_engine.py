@@ -253,7 +253,36 @@ class CandidateBlockEngine:
             if o.section_id:
                 occs_by_sec.setdefault(o.section_id, []).append(o)
 
-        candidates: list[CandidateBlockResponse] = []
+        # Precompute window-level properties (conflict check & duration) once per unique corridor window
+        # Windows are independent of specific opportunities or tasks, eliminating 15,000+ redundant conflict calculations.
+        window_meta: dict[str, dict[str, Any]] = {}
+        for cw in windows:
+            if not cw.window_id or not cw.window_start or not cw.window_end:
+                continue
+            sec_occs = occs_by_sec.get(cw.section_id or "", [])
+            has_conflict, conf_count, conf_trains = check_train_conflicts(
+                cw.window_start, cw.window_end, sec_occs
+            )
+            w_dur = (
+                round(cw.duration_mins / 60.0, 2)
+                if cw.duration_mins
+                else round((cw.window_end - cw.window_start).total_seconds() / 3600.0, 2)
+            )
+            window_meta[cw.window_id] = {
+                "has_train_conflict": has_conflict,
+                "conflict_count": conf_count,
+                "conflict_trains": conf_trains,
+                "window_duration_hrs": w_dur,
+                "window_date": cw.window_start.date(),
+            }
+
+        # Index freight demand forecasts by (section_id, date) for O(1) retrieval
+        freight_index: dict[tuple[str, date], FreightForecast] = {}
+        for ff in freight_forecasts:
+            if ff.section_id and ff.date:
+                freight_index[(ff.section_id, ff.date)] = ff
+
+        candidates: list[dict[str, Any]] = []
 
         # 2. Evaluate Integration Opportunities
         opportunities = await CompatibilityEngine.find_all_opportunities(
@@ -268,29 +297,25 @@ class CandidateBlockEngine:
                 continue
 
             sec_windows = windows_by_sec.get(opp.section_id, [])
-            sec_occs = occs_by_sec.get(opp.section_id, [])
 
             for cw in sec_windows:
-                if not cw.window_start or not cw.window_end:
+                w_info = window_meta.get(cw.window_id)
+                if not w_info:
                     continue
-                w_date = cw.window_start.date()
+                w_date = w_info["window_date"]
                 if date_filter and w_date != date_filter:
                     continue
 
-                w_dur_hrs = (
-                    round(cw.duration_mins / 60.0, 2)
-                    if cw.duration_mins
-                    else round((cw.window_end - cw.window_start).total_seconds() / 3600.0, 2)
-                )
+                w_dur_hrs = w_info["window_duration_hrs"]
                 req_dur_hrs = opp.combined_duration_hrs
 
                 # Check duration feasibility
                 is_dur_feasible = w_dur_hrs >= req_dur_hrs
 
-                # Check train conflicts
-                has_train_conflict, conflict_count, conflict_trains = check_train_conflicts(
-                    cw.window_start, cw.window_end, sec_occs
-                )
+                # Train conflicts (from precomputed window-level metadata)
+                has_train_conflict = w_info["has_train_conflict"]
+                conflict_count = w_info["conflict_count"]
+                conflict_trains = w_info["conflict_trains"]
 
                 # Determine computed feasibility status
                 if not is_dur_feasible:
@@ -300,10 +325,25 @@ class CandidateBlockEngine:
                 else:
                     computed_feas = "FEASIBLE"
 
-                # Evaluate freight
-                f_avail, f_level, f_trains, f_tonnage, f_conf, f_reasons = evaluate_freight(
-                    opp.section_id, w_date, freight_forecasts
-                )
+                # Feasibility status filter early-check
+                if feasibility_status and computed_feas.upper() != feasibility_status.upper():
+                    continue
+
+                # Evaluate freight using pre-indexed dictionary
+                ff = freight_index.get((opp.section_id, w_date))
+                if ff:
+                    f_avail = True
+                    f_level = (ff.traffic_level or "MEDIUM").upper()
+                    f_trains = ff.forecast_freight_trains
+                    f_tonnage = float(ff.forecast_tonnage) if ff.forecast_tonnage is not None else None
+                    f_conf = ff.forecast_confidence
+                    f_reasons = [
+                        f"Freight forecast is {f_level} ({f_trains or 0} trains, "
+                        f"{f_tonnage or 0:.0f} tonnes, confidence: {f_conf or 0.8:.2f})"
+                    ]
+                else:
+                    f_avail, f_level, f_trains, f_tonnage, f_conf = False, None, None, None, None
+                    f_reasons = ["Freight forecast data is unavailable for this section/date"]
 
                 # Evaluate resources
                 r_check, r_avail, r_ids, r_reasons = evaluate_resources(
@@ -351,38 +391,36 @@ class CandidateBlockEngine:
 
                 cand_id = f"CAND-{opp.section_id}-{cw.window_id}-{opp.opportunity_id}"
 
-                candidates.append(
-                    CandidateBlockResponse(
-                        candidate_id=cand_id,
-                        opportunity_id=opp.opportunity_id,
-                        task_ids=opp.task_ids,
-                        departments_involved=opp.departments_involved,
-                        section_id=opp.section_id,
-                        window_id=cw.window_id,
-                        candidate_start=cw.window_start,
-                        candidate_end=cw.window_end,
-                        required_duration_hrs=req_dur_hrs,
-                        window_duration_hrs=w_dur_hrs,
-                        source_window_status=cw.window_status,
-                        computed_feasibility_status=computed_feas,
-                        train_conflict=has_train_conflict,
-                        train_conflict_count=conflict_count,
-                        freight_data_available=f_avail,
-                        freight_level=f_level,
-                        forecast_freight_trains=f_trains,
-                        forecast_tonnage=f_tonnage,
-                        freight_confidence=f_conf,
-                        resource_check=r_check,
-                        resources_available=r_avail,
-                        resource_ids=r_ids,
-                        priority_score=opp.priority_summary.highest_task_priority,
-                        compatibility_score=opp.compatibility_score,
-                        candidate_score=score,
-                        reasons=reasons,
-                        warnings=warnings,
-                        advisory_note=DEFAULT_CANDIDATE_ADVISORY_NOTE,
-                    )
-                )
+                candidates.append({
+                    "candidate_id": cand_id,
+                    "opportunity_id": opp.opportunity_id,
+                    "task_ids": opp.task_ids,
+                    "departments_involved": opp.departments_involved,
+                    "section_id": opp.section_id,
+                    "window_id": cw.window_id,
+                    "candidate_start": cw.window_start,
+                    "candidate_end": cw.window_end,
+                    "required_duration_hrs": req_dur_hrs,
+                    "window_duration_hrs": w_dur_hrs,
+                    "source_window_status": cw.window_status,
+                    "computed_feasibility_status": computed_feas,
+                    "train_conflict": has_train_conflict,
+                    "train_conflict_count": conflict_count,
+                    "freight_data_available": f_avail,
+                    "freight_level": f_level,
+                    "forecast_freight_trains": f_trains,
+                    "forecast_tonnage": f_tonnage,
+                    "freight_confidence": f_conf,
+                    "resource_check": r_check,
+                    "resources_available": r_avail,
+                    "resource_ids": r_ids,
+                    "priority_score": opp.priority_summary.highest_task_priority,
+                    "compatibility_score": opp.compatibility_score,
+                    "candidate_score": score,
+                    "reasons": reasons,
+                    "warnings": warnings,
+                    "advisory_note": DEFAULT_CANDIDATE_ADVISORY_NOTE,
+                })
 
         # 3. Evaluate Single Tasks (for stand-alone task candidate generation)
         stmt_tasks = (
@@ -405,7 +443,6 @@ class CandidateBlockEngine:
 
             sec_id = t.section_id or "UNKNOWN"
             sec_windows = windows_by_sec.get(sec_id, [])
-            sec_occs = occs_by_sec.get(sec_id, [])
 
             crit = t.asset.criticality_index if t.asset else None
             risk = t.asset.failure_risk_score if t.asset else None
@@ -424,22 +461,19 @@ class CandidateBlockEngine:
             req_dur_hrs = float(t.required_duration_hrs or 2.0)
 
             for cw in sec_windows:
-                if not cw.window_start or not cw.window_end:
+                w_info = window_meta.get(cw.window_id)
+                if not w_info:
                     continue
-                w_date = cw.window_start.date()
+                w_date = w_info["window_date"]
                 if date_filter and w_date != date_filter:
                     continue
 
-                w_dur_hrs = (
-                    round(cw.duration_mins / 60.0, 2)
-                    if cw.duration_mins
-                    else round((cw.window_end - cw.window_start).total_seconds() / 3600.0, 2)
-                )
+                w_dur_hrs = w_info["window_duration_hrs"]
 
                 is_dur_feasible = w_dur_hrs >= req_dur_hrs
-                has_train_conflict, conflict_count, conflict_trains = check_train_conflicts(
-                    cw.window_start, cw.window_end, sec_occs
-                )
+                has_train_conflict = w_info["has_train_conflict"]
+                conflict_count = w_info["conflict_count"]
+                conflict_trains = w_info["conflict_trains"]
 
                 if not is_dur_feasible:
                     computed_feas = "DURATION_INSUFFICIENT"
@@ -448,9 +482,26 @@ class CandidateBlockEngine:
                 else:
                     computed_feas = "FEASIBLE"
 
-                f_avail, f_level, f_trains, f_tonnage, f_conf, f_reasons = evaluate_freight(
-                    sec_id, w_date, freight_forecasts
-                )
+                # Feasibility status filter early-check
+                if feasibility_status and computed_feas.upper() != feasibility_status.upper():
+                    continue
+
+                # Evaluate freight using pre-indexed dictionary
+                ff = freight_index.get((sec_id, w_date))
+                if ff:
+                    f_avail = True
+                    f_level = (ff.traffic_level or "MEDIUM").upper()
+                    f_trains = ff.forecast_freight_trains
+                    f_tonnage = float(ff.forecast_tonnage) if ff.forecast_tonnage is not None else None
+                    f_conf = ff.forecast_confidence
+                    f_reasons = [
+                        f"Freight forecast is {f_level} ({f_trains or 0} trains, "
+                        f"{f_tonnage or 0:.0f} tonnes, confidence: {f_conf or 0.8:.2f})"
+                    ]
+                else:
+                    f_avail, f_level, f_trains, f_tonnage, f_conf = False, None, None, None, None
+                    f_reasons = ["Freight forecast data is unavailable for this section/date"]
+
                 r_check, r_avail, r_ids, r_reasons = evaluate_resources(
                     [t.department], w_date, resources, availabilities
                 )
@@ -492,54 +543,47 @@ class CandidateBlockEngine:
 
                 cand_id = f"CAND-{sec_id}-{cw.window_id}-{t.task_id}"
 
-                candidates.append(
-                    CandidateBlockResponse(
-                        candidate_id=cand_id,
-                        opportunity_id=None,
-                        task_ids=[t.task_id],
-                        departments_involved=[t.department],
-                        section_id=sec_id,
-                        window_id=cw.window_id,
-                        candidate_start=cw.window_start,
-                        candidate_end=cw.window_end,
-                        required_duration_hrs=req_dur_hrs,
-                        window_duration_hrs=w_dur_hrs,
-                        source_window_status=cw.window_status,
-                        computed_feasibility_status=computed_feas,
-                        train_conflict=has_train_conflict,
-                        train_conflict_count=conflict_count,
-                        freight_data_available=f_avail,
-                        freight_level=f_level,
-                        forecast_freight_trains=f_trains,
-                        forecast_tonnage=f_tonnage,
-                        freight_confidence=f_conf,
-                        resource_check=r_check,
-                        resources_available=r_avail,
-                        resource_ids=r_ids,
-                        priority_score=p_res.computed_priority_score,
-                        compatibility_score=100.0,
-                        candidate_score=score,
-                        reasons=reasons,
-                        warnings=warnings,
-                        advisory_note=DEFAULT_CANDIDATE_ADVISORY_NOTE,
-                    )
-                )
+                candidates.append({
+                    "candidate_id": cand_id,
+                    "opportunity_id": None,
+                    "task_ids": [t.task_id],
+                    "departments_involved": [t.department],
+                    "section_id": sec_id,
+                    "window_id": cw.window_id,
+                    "candidate_start": cw.window_start,
+                    "candidate_end": cw.window_end,
+                    "required_duration_hrs": req_dur_hrs,
+                    "window_duration_hrs": w_dur_hrs,
+                    "source_window_status": cw.window_status,
+                    "computed_feasibility_status": computed_feas,
+                    "train_conflict": has_train_conflict,
+                    "train_conflict_count": conflict_count,
+                    "freight_data_available": f_avail,
+                    "freight_level": f_level,
+                    "forecast_freight_trains": f_trains,
+                    "forecast_tonnage": f_tonnage,
+                    "freight_confidence": f_conf,
+                    "resource_check": r_check,
+                    "resources_available": r_avail,
+                    "resource_ids": r_ids,
+                    "priority_score": p_res.computed_priority_score,
+                    "compatibility_score": 100.0,
+                    "candidate_score": score,
+                    "reasons": reasons,
+                    "warnings": warnings,
+                    "advisory_note": DEFAULT_CANDIDATE_ADVISORY_NOTE,
+                })
 
-        # 4. Apply Filters
-        filtered = candidates
-        if feasibility_status:
-            filtered = [c for c in filtered if c.computed_feasibility_status.upper() == feasibility_status.upper()]
-
-        # 5. Sort Candidates: FEASIBLE first, then highest candidate_score descending
-        filtered.sort(
+        # 4. Sort Candidates: FEASIBLE first, then highest candidate_score descending
+        candidates.sort(
             key=lambda c: (
-                c.computed_feasibility_status == "FEASIBLE",
-                c.candidate_score,
+                c["computed_feasibility_status"] == "FEASIBLE",
+                c["candidate_score"],
             ),
             reverse=True,
         )
 
-        return filtered
+        return [CandidateBlockResponse(**c) for c in candidates]
 
     @classmethod
     async def get_candidate_by_id(
