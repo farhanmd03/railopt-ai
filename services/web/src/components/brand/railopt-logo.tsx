@@ -112,7 +112,12 @@ export function RailOptLogo({
           <div className="flex items-center gap-1.5 leading-none">
             <span
               className={cn(
-                "font-bold tracking-tight text-foreground font-sans",
+                "font-bold tracking-tight font-sans",
+                theme === "dark"
+                  ? "text-white"
+                  : theme === "light"
+                  ? "text-slate-900"
+                  : "text-foreground group-data-[theme=dark]:text-white in-dark:text-white",
                 titleSizes
               )}
             >
@@ -131,7 +136,16 @@ export function RailOptLogo({
             </span>
           </div>
           {variant === "full" && (
-            <span className="text-[10px] text-muted-foreground font-medium tracking-tight mt-0.5">
+            <span
+              className={cn(
+                "text-[10px] font-medium tracking-tight mt-0.5",
+                theme === "dark"
+                  ? "text-slate-400"
+                  : theme === "light"
+                  ? "text-slate-500"
+                  : "text-muted-foreground"
+              )}
+            >
               Eastern Railway • Howrah
             </span>
           )}

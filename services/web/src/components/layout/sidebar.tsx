@@ -104,7 +104,7 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
       >
         {/* Brand Header */}
         <div className="flex items-center px-4 py-4 border-b border-slate-800/80 bg-slate-950/40">
-          <RailOptLogo size="md" variant="full" />
+          <RailOptLogo size="md" variant="full" theme="dark" />
         </div>
 
         {/* Grouped Navigation Links */}

@@ -169,7 +169,7 @@ export default function LoginPage() {
         {/* Top: Brand & Division Pill */}
         <div className="relative z-10">
           <div className="flex items-center justify-between">
-            <RailOptLogo size="lg" variant="full" />
+            <RailOptLogo size="lg" variant="full" theme="dark" />
             <div className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-950/80 text-blue-300 border border-blue-800/80 shadow-xs">
               <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
               <span>EASTERN RAILWAY • HWH</span>
