@@ -277,7 +277,7 @@ export default function LoginPage() {
                 ) : (
                   <>
                     <Shield className="h-4 w-4 text-blue-200" />
-                    <span>Continue with Railway SSO</span>
+                    <span>Continue with Auth0</span>
                     <ArrowRight className="h-4 w-4 ml-auto" />
                   </>
                 )}

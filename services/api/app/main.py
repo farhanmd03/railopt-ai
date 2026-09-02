@@ -20,6 +20,9 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+import json
+import os
+
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -59,9 +62,32 @@ app = FastAPI(
 )
 
 # ── Middleware ───────────────────────────────────────────────────
+if settings.is_development:
+    cors_allow_origins = ["*"]
+else:
+    cors_allow_origins = [
+        "https://railopt-ai-five.vercel.app",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    # Ingest additional origins from environment if configured
+    cors_env = os.environ.get("CORS_ORIGINS", "").strip()
+    if cors_env:
+        try:
+            parsed = json.loads(cors_env)
+            if isinstance(parsed, list):
+                for origin in parsed:
+                    if origin not in cors_allow_origins:
+                        cors_allow_origins.append(origin)
+        except Exception:
+            for origin in cors_env.split(","):
+                cleaned = origin.strip()
+                if cleaned and cleaned not in cors_allow_origins:
+                    cors_allow_origins.append(cleaned)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.is_development else [],
+    allow_origins=cors_allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -50,7 +50,7 @@ export function AppShell({ children }: AppShellProps) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-[var(--background)] p-4">
         <LoadingState
-          message="Verifying Railway OIDC identity & permissions..."
+          message="Verifying OIDC identity & permissions..."
           className="max-w-md w-full shadow-sm"
         />
       </div>

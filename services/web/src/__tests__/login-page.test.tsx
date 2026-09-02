@@ -54,7 +54,7 @@ describe("Login Page & 8-Role Demo Access", () => {
 
     render(<LoginPage />);
 
-    const signInBtn = screen.getByRole("button", { name: /continue with railway sso/i });
+    const signInBtn = screen.getByRole("button", { name: /continue with auth0/i });
     expect(signInBtn).toBeInTheDocument();
 
     fireEvent.click(signInBtn);
@@ -212,7 +212,7 @@ describe("Login Page & 8-Role Demo Access", () => {
     render(<LoginPage />);
 
     expect(screen.queryByText(/DEMO ACCESS — SIH EVALUATION/i)).toBeNull();
-    expect(screen.getByRole("button", { name: /continue with railway sso/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /continue with auth0/i })).toBeInTheDocument();
   });
 
   it("renders authentication error if sign in failed", () => {
