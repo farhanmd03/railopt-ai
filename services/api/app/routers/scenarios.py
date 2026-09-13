@@ -142,14 +142,14 @@ async def create_and_run_scenario(
 
     # 2. Build objective weights overriding with request parameters
     weights = ObjectiveWeights(
-        weight_priority_score=request.weight_priority_score or 1.0,
-        weight_integrated_task_bonus=request.weight_integrated_task_bonus or 10.0,
-        weight_tasks_scheduled=request.weight_tasks_scheduled or 5.0,
-        weight_overdue_mitigation=request.weight_overdue_mitigation or 2.0,
-        weight_train_disruption=request.weight_train_disruption or 8.0,
-        weight_freight_impact=request.weight_freight_impact or 3.0,
-        weight_unused_window_time=request.weight_unused_window_time or 0.5,
-        weight_total_block_count=request.weight_total_block_count or 1.0,
+        weight_priority_score=request.weight_priority_score if request.weight_priority_score is not None else 1.0,
+        weight_integrated_task_bonus=request.weight_integrated_task_bonus if request.weight_integrated_task_bonus is not None else 10.0,
+        weight_tasks_scheduled=request.weight_tasks_scheduled if request.weight_tasks_scheduled is not None else 5.0,
+        weight_overdue_mitigation=request.weight_overdue_mitigation if request.weight_overdue_mitigation is not None else 2.0,
+        weight_train_disruption=request.weight_train_disruption if request.weight_train_disruption is not None else 8.0,
+        weight_freight_impact=request.weight_freight_impact if request.weight_freight_impact is not None else 3.0,
+        weight_unused_window_time=request.weight_unused_window_time if request.weight_unused_window_time is not None else 0.5,
+        weight_total_block_count=request.weight_total_block_count if request.weight_total_block_count is not None else 1.0,
     )
 
     # Hard constraints remain strictly locked to prevent compromising railway safety rules
