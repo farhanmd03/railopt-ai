@@ -1,6 +1,9 @@
 import { apiGet, apiPost } from "../api-client";
 import { PaginatedResponse } from "../types/api";
 import {
+  AdjustmentCategory,
+  AdjustmentPayload,
+  NegotiationAction,
   NegotiationLog,
   NegotiationRequest,
   OptimizationRun,
@@ -8,6 +11,14 @@ import {
   OptimizationRunDetail,
   OptimizedBlock,
 } from "../types/optimization";
+
+export type {
+  AdjustmentCategory,
+  AdjustmentPayload,
+  NegotiationAction,
+  NegotiationLog,
+  NegotiationRequest,
+};
 
 export interface ListOptimizationRunsParams {
   page?: number;

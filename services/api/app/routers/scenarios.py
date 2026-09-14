@@ -36,6 +36,8 @@ from app.routers.optimization import (
     _resolve_run,
 )
 from app.schemas.scenario import (
+    BlockCounterfactualRequest,
+    CounterfactualComparison,
     OptimizationScenarioListResponse,
     OptimizationScenarioResponse,
     ScenarioBlockSummary,
@@ -93,6 +95,13 @@ def _format_scenario_response(
             retained_blocks=[_format_block_response(b) for b in b_diffs["retained_blocks"]],
         )
 
+    counterfactual_comp = None
+    if "counterfactual_comparison" in params_dict and isinstance(params_dict["counterfactual_comparison"], dict):
+        try:
+            counterfactual_comp = CounterfactualComparison(**params_dict["counterfactual_comparison"])
+        except Exception:
+            pass
+
     return OptimizationScenarioResponse(
         id=scenario.id,
         scenario_id=scenario.scenario_id,
@@ -110,6 +119,7 @@ def _format_scenario_response(
         comparison=comparison_summary,
         task_impact=task_impact,
         block_differences=block_diffs,
+        counterfactual_comparison=counterfactual_comp,
     )
 
 
@@ -157,6 +167,26 @@ async def create_and_run_scenario(
 
     scenario_uid = f"SCEN-{uuid.uuid4().hex[:8].upper()}"
 
+    # Evaluate counterfactual comparison if target_block_id or block scenario is specified
+    counterfactual_dict = None
+    if request.target_block_id is not None:
+        try:
+            cf_comp = await OptimizationService.evaluate_block_counterfactual(
+                db=db,
+                target_block_id=request.target_block_id,
+                scenario_type=request.scenario_type,
+                postpone_hours=request.postpone_hours,
+                new_start=request.new_start,
+                new_end=request.new_end,
+                new_duration_hrs=request.new_duration_hrs,
+                new_task_ids=request.new_task_ids,
+                new_departments=request.new_departments,
+                notes=request.notes,
+            )
+            counterfactual_dict = cf_comp.model_dump(mode="json")
+        except Exception as cf_err:
+            logger.warning("Could not evaluate block counterfactual: %s", cf_err)
+
     param_dict = {
         "name": request.name,
         "scenario_type": request.scenario_type,
@@ -173,6 +203,14 @@ async def create_and_run_scenario(
         "planning_start": request.planning_start.isoformat() if request.planning_start else None,
         "planning_end": request.planning_end.isoformat() if request.planning_end else None,
         "excluded_candidate_ids": request.excluded_candidate_ids,
+        "target_block_id": request.target_block_id,
+        "postpone_hours": request.postpone_hours,
+        "new_start": request.new_start.isoformat() if request.new_start else None,
+        "new_end": request.new_end.isoformat() if request.new_end else None,
+        "new_duration_hrs": request.new_duration_hrs,
+        "new_task_ids": request.new_task_ids,
+        "new_departments": request.new_departments,
+        "counterfactual_comparison": counterfactual_dict,
         "notes": request.notes,
     }
 
@@ -253,6 +291,47 @@ async def create_and_run_scenario(
         base_blocks=base_blocks,
         scenario_blocks=scen_blocks,
     )
+
+
+@router.post(
+    "/blocks/{block_id}/counterfactual",
+    response_model=CounterfactualComparison,
+    status_code=status.HTTP_200_OK,
+    summary="Evaluate Block Counterfactual Alternative (RBAC: Authenticated)",
+    description="Computes before/after comparison, train conflict impact, priority impact, and readiness gate assessment for an alternative block schedule without mutating the database.",
+    responses={
+        200: {"description": "Counterfactual comparison computed"},
+        401: {"description": "Missing, invalid, or expired authentication token"},
+        403: {"description": "Insufficient role privileges"},
+        404: {"description": "Optimized block not found"},
+        422: {"description": "Validation error in counterfactual parameters"},
+    },
+)
+async def evaluate_block_counterfactual_endpoint(
+    block_id: int,
+    request: BlockCounterfactualRequest,
+    current_user: User = Depends(require_roles(*OPTIMIZATION_READ_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> CounterfactualComparison:
+    """Evaluate counterfactual alternative for a specific maintenance block."""
+    try:
+        return await OptimizationService.evaluate_block_counterfactual(
+            db=db,
+            target_block_id=block_id,
+            scenario_type=request.scenario_type,
+            postpone_hours=request.postpone_hours,
+            new_start=request.new_start,
+            new_end=request.new_end,
+            new_duration_hrs=request.new_duration_hrs,
+            new_task_ids=request.new_task_ids,
+            new_departments=request.new_departments,
+            notes=request.notes,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
 
 
 @router.get(

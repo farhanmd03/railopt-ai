@@ -1,16 +1,17 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "react-oidc-context";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getOptimizationRun } from "@/lib/api/optimization";
+import { getOptimizationRun, getOptimizedBlocks } from "@/lib/api/optimization";
 import { getRunScenarios, createRunScenario, getScenarioDetail } from "@/lib/api/scenarios";
 import { OptimizationScenario, ScenarioCreatePayload } from "@/lib/types/scenario";
 import { extractRoles, hasAnyRole } from "@/lib/auth-config";
 import { ScenarioForm } from "@/components/optimization/scenario-form";
 import { ScenarioComparisonTable } from "@/components/optimization/scenario-comparison-table";
+import { CounterfactualComparisonCard } from "@/components/optimization/counterfactual-comparison-card";
 import { ScenarioTaskDiff } from "@/components/optimization/scenario-task-diff";
 import { ScenarioBlockDiff } from "@/components/optimization/scenario-block-diff";
 import { ScenarioHistory } from "@/components/optimization/scenario-history";
@@ -28,6 +29,7 @@ import {
 
 export default function WhatIfScenarioPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const queryClient = useQueryClient();
   const auth = useAuth();
@@ -36,6 +38,8 @@ export default function WhatIfScenarioPage() {
 
   const rawRunId = params?.run_id as string;
   const runId = Array.isArray(rawRunId) ? rawRunId[0] : rawRunId;
+  const blockParam = searchParams?.get("block");
+  const initialBlockId = blockParam ? parseInt(blockParam, 10) : null;
 
   const [activeScenario, setActiveScenario] = useState<OptimizationScenario | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -51,7 +55,14 @@ export default function WhatIfScenarioPage() {
     enabled: !!runId,
   });
 
-  // 2. Fetch scenario history for this base run
+  // 2. Fetch baseline blocks for counterfactual selection
+  const { data: blocksData } = useQuery({
+    queryKey: ["optimization-blocks", runId],
+    queryFn: () => getOptimizedBlocks(runId, { page_size: 100 }),
+    enabled: !!runId,
+  });
+
+  // 3. Fetch scenario history for this base run
   const {
     data: scenarioHistory,
     isLoading: isHistoryLoading,
@@ -68,7 +79,7 @@ export default function WhatIfScenarioPage() {
     }
   }, [scenarioHistory, activeScenario]);
 
-  // 3. Create & Execute scenario mutation
+  // 4. Create & Execute scenario mutation
   const runScenarioMutation = useMutation({
     mutationFn: (payload: ScenarioCreatePayload) => createRunScenario(runId, payload),
     onSuccess: (newScenario) => {
@@ -143,7 +154,7 @@ export default function WhatIfScenarioPage() {
           <div className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-blue-600" />
             <h1 className="text-base sm:text-lg font-bold text-foreground">
-              What-If Scenario Laboratory
+              What-If Scenario & Counterfactual Laboratory
             </h1>
           </div>
         </div>
@@ -221,12 +232,14 @@ export default function WhatIfScenarioPage() {
         </div>
       )}
 
-      {/* Grid: Scenario Form (Left / Top) & Comparison Results (Right / Bottom) */}
+      {/* Grid: Scenario Form (Left) & Comparison Results (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Scenario Configuration Form */}
         <div className="lg:col-span-5 space-y-6">
           <ScenarioForm
             baseRunId={baseRun.id}
+            blocks={blocksData?.items || []}
+            initialBlockId={initialBlockId}
             onSubmit={async (payload) => {
               await runScenarioMutation.mutateAsync(payload);
             }}
@@ -245,7 +258,12 @@ export default function WhatIfScenarioPage() {
 
         {/* Comparative Analysis Results */}
         <div className="lg:col-span-7 space-y-6">
-          {activeScenario?.comparison ? (
+          {activeScenario?.counterfactual_comparison ? (
+            <CounterfactualComparisonCard
+              comparison={activeScenario.counterfactual_comparison}
+              scenarioName={activeScenario.name}
+            />
+          ) : activeScenario?.comparison ? (
             <>
               {/* Hero Comparison Table */}
               <ScenarioComparisonTable
@@ -286,10 +304,10 @@ export default function WhatIfScenarioPage() {
                 <Sparkles className="h-6 w-6" />
               </div>
               <h3 className="text-sm font-bold text-foreground">
-                Ready to Run What-If Scenario
+                Ready to Explore What-If & Counterfactuals
               </h3>
               <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                Modify planning assumptions on the left and click &quot;Run What-If Scenario&quot; to compute exact mathematical deltas using Google OR-Tools CP-SAT.
+                Choose a scenario category (Postpone, Reduce Duration, Move Window, Change Tasks, or Objective Weights) and click &quot;Run What-If Scenario&quot; to evaluate mathematical trade-offs and readiness deltas.
               </p>
             </div>
           )}

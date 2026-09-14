@@ -18,7 +18,7 @@ strictly read-only and unmodified.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 from typing import Any
@@ -33,12 +33,15 @@ from app.domain.objectives import ObjectiveWeights
 from app.domain.results import OptimizationRunResult, SolverStatus
 from app.domain.task import OptimizationTask
 from app.models.asset import MaintenanceTask
+from app.models.operations import TrainSectionOccupancy
 from app.models.optimization import (
     OptimizationRun,
     OptimizedBlock,
     OptimizedBlockTask,
 )
-from app.services.candidate_block_engine import CandidateBlockEngine
+from app.schemas.readiness import PossessionReadinessResponse, ReadinessCheck
+from app.schemas.scenario import CounterfactualBlockData, CounterfactualComparison
+from app.services.candidate_block_engine import CandidateBlockEngine, check_train_conflicts
 from app.services.optimizer_engine import CPSATSolver
 from app.services.priority_engine import compute_priority
 
@@ -486,3 +489,412 @@ class OptimizationService:
         }
 
         return comparison_summary, task_impact, block_differences
+
+    @classmethod
+    def assess_readiness(
+        cls,
+        block_id: int,
+        block_start: datetime,
+        block_end: datetime,
+        duration_hrs: float,
+        train_conflicts: int,
+        resource_status: str = "VERIFIED",
+        status: str = "Candidate",
+    ) -> PossessionReadinessResponse:
+        """Assess possession readiness deterministically for a proposed or alternative block."""
+        checks: list[ReadinessCheck] = []
+        duration = float(duration_hrs or 0.0)
+
+        # 1. Possession window check
+        if block_start >= block_end or duration <= 0:
+            checks.append(
+                ReadinessCheck(
+                    key="window",
+                    label="Possession window",
+                    status="FAIL",
+                    message="The proposed block has an invalid or zero-length possession window.",
+                )
+            )
+        elif duration > 8.0:
+            checks.append(
+                ReadinessCheck(
+                    key="window",
+                    label="Possession window",
+                    status="FAIL",
+                    message=f"Block duration is {duration:.2f} hours, exceeding the prototype safety limit of 8 hours.",
+                )
+            )
+        else:
+            checks.append(
+                ReadinessCheck(
+                    key="window",
+                    label="Possession window",
+                    status="PASS",
+                    message=f"Proposed window is valid for {duration:.2f} hours.",
+                )
+            )
+
+        # 2. Train conflict check
+        conflicts = train_conflicts or 0
+        if conflicts > 0:
+            checks.append(
+                ReadinessCheck(
+                    key="train_conflicts",
+                    label="Train conflict check",
+                    status="PENDING",
+                    message=f"{conflicts} train conflict(s) remain associated with this proposed block.",
+                )
+            )
+        else:
+            checks.append(
+                ReadinessCheck(
+                    key="train_conflicts",
+                    label="Train conflict check",
+                    status="PASS",
+                    message="No train conflicts are recorded for this proposed block.",
+                )
+            )
+
+        # 3. Resource readiness
+        res_val = str(resource_status or "UNVERIFIED").upper()
+        if res_val in {"AVAILABLE", "READY", "VERIFIED"}:
+            checks.append(
+                ReadinessCheck(
+                    key="resources",
+                    label="Resource readiness",
+                    status="PASS",
+                    message="Required resources are marked as ready/verified.",
+                )
+            )
+        else:
+            checks.append(
+                ReadinessCheck(
+                    key="resources",
+                    label="Resource readiness",
+                    status="PENDING",
+                    message="Resource readiness is not verified in the current prototype data.",
+                )
+            )
+
+        # 4. Block status
+        b_status = (status or "Candidate").upper()
+        if b_status == "REJECTED":
+            checks.append(
+                ReadinessCheck(
+                    key="block_status",
+                    label="Block status",
+                    status="FAIL",
+                    message="This proposed block has been rejected.",
+                )
+            )
+        else:
+            checks.append(
+                ReadinessCheck(
+                    key="block_status",
+                    label="Block status",
+                    status="PASS",
+                    message=f"Block is currently in '{status or 'Candidate'}' status.",
+                )
+            )
+
+        failed = [c for c in checks if c.status == "FAIL"]
+        pending = [c for c in checks if c.status == "PENDING"]
+
+        if failed:
+            readiness = "REDUCE"
+            summary = "The proposed block requires scope reduction or correction before operational review."
+        elif pending:
+            readiness = "HOLD"
+            summary = "The proposed block has unresolved readiness items and should remain on hold."
+        else:
+            readiness = "GO"
+            summary = "All prototype readiness checks pass. Final possession approval remains a human decision."
+
+        return PossessionReadinessResponse(
+            block_id=block_id,
+            readiness=readiness,
+            summary=summary,
+            checks=checks,
+            human_decision_required=True,
+        )
+
+    @classmethod
+    async def evaluate_block_counterfactual(
+        cls,
+        db: AsyncSession,
+        target_block_id: int,
+        scenario_type: str,
+        postpone_hours: float | None = None,
+        new_start: datetime | None = None,
+        new_end: datetime | None = None,
+        new_duration_hrs: float | None = None,
+        new_task_ids: list[str] | None = None,
+        new_departments: list[str] | None = None,
+        notes: str | None = None,
+    ) -> CounterfactualComparison:
+        """Evaluate a realistic counterfactual alternative for a specific optimized block."""
+        # 1. Load baseline block
+        stmt = (
+            select(OptimizedBlock)
+            .options(selectinload(OptimizedBlock.tasks))
+            .where(OptimizedBlock.id == target_block_id)
+        )
+        base_block = (await db.scalars(stmt)).first()
+        if not base_block:
+            raise ValueError(f"Optimized block '{target_block_id}' not found.")
+
+        # 2. Extract baseline properties
+        base_start = base_block.block_start
+        base_end = base_block.block_end
+        base_duration = float(base_block.block_duration_hrs or 0.0)
+        base_tasks = [t.task_id for t in base_block.tasks] if base_block.tasks else []
+        base_depts = (
+            [d.strip() for d in base_block.departments_involved.split(",") if d.strip()]
+            if base_block.departments_involved
+            else []
+        )
+        base_priority = float(base_block.priority_score or 0.0)
+        base_conflicts = int(base_block.train_conflicts or 0)
+        base_impact = float(base_block.estimated_impact_score or 0.0)
+
+        resource_val = "VERIFIED"
+        opt_id_label = f"OPT-BLK-{base_block.id:04d}"
+        if base_block.explanation:
+            try:
+                expl = json.loads(base_block.explanation)
+                opt_id_label = expl.get("optimized_block_id", opt_id_label)
+                resource_val = expl.get("resource_status", "VERIFIED")
+            except Exception:
+                pass
+
+        base_readiness = cls.assess_readiness(
+            block_id=base_block.id,
+            block_start=base_start,
+            block_end=base_end,
+            duration_hrs=base_duration,
+            train_conflicts=base_conflicts,
+            resource_status=resource_val,
+            status=base_block.status or "Candidate",
+        )
+
+        baseline_data = CounterfactualBlockData(
+            block_id=base_block.id,
+            optimized_block_id=opt_id_label,
+            section_id=base_block.section_id or "UNKNOWN",
+            block_start=base_start,
+            block_end=base_end,
+            duration_hrs=base_duration,
+            is_integrated=base_block.is_integrated or (len(base_depts) > 1),
+            departments=base_depts,
+            task_ids=base_tasks,
+            priority_score=base_priority,
+            train_conflicts=base_conflicts,
+            conflict_trains=[],
+            estimated_impact_score=base_impact,
+            readiness=base_readiness,
+        )
+
+        # 3. Compute alternative parameters
+        st = (scenario_type or "").upper()
+        if st in ("POSTPONE", "POSTPONE_BLOCK"):
+            shift_hrs = float(postpone_hours) if postpone_hours is not None else 0.0
+            if shift_hrs > 0.0:
+                alt_start = base_start + timedelta(hours=shift_hrs)
+                alt_end = base_end + timedelta(hours=shift_hrs)
+                alt_duration = base_duration
+            elif new_start is not None:
+                alt_start = new_start
+                alt_end = new_end or (new_start + timedelta(hours=base_duration))
+                alt_duration = round((alt_end - alt_start).total_seconds() / 3600.0, 2)
+            else:
+                alt_start = base_start
+                alt_end = base_end
+                alt_duration = base_duration
+            alt_tasks = list(base_tasks)
+            alt_depts = list(base_depts)
+            alt_priority = base_priority
+
+        elif st in ("REDUCE_DURATION", "REDUCE"):
+            alt_duration = float(new_duration_hrs) if new_duration_hrs is not None else max(1.0, base_duration - 1.0)
+            alt_start = base_start
+            alt_end = base_start + timedelta(hours=alt_duration)
+            alt_tasks = list(base_tasks)
+            alt_depts = list(base_depts)
+            alt_priority = base_priority
+
+        elif st in ("MOVE_WINDOW", "MOVE"):
+            if new_start is not None and new_end is not None:
+                alt_start = new_start
+                alt_end = new_end
+                alt_duration = round((new_end - new_start).total_seconds() / 3600.0, 2)
+            else:
+                alt_start = base_start
+                alt_end = base_end
+                alt_duration = base_duration
+            alt_tasks = list(base_tasks)
+            alt_depts = list(base_depts)
+            alt_priority = base_priority
+
+        elif st in ("CHANGE_TASKS_DEPT", "CHANGE_TASKS"):
+            alt_start = base_start
+            alt_end = base_end
+            alt_duration = base_duration
+            alt_tasks = list(new_task_ids) if new_task_ids is not None else list(base_tasks)
+            alt_depts = list(new_departments) if new_departments is not None else list(base_depts)
+
+            # Recompute priority from authentic MaintenanceTask records
+            if alt_tasks:
+                stmt_tasks = (
+                    select(MaintenanceTask)
+                    .options(selectinload(MaintenanceTask.asset))
+                    .where(MaintenanceTask.task_id.in_(alt_tasks))
+                )
+                db_tasks = (await db.scalars(stmt_tasks)).all()
+                total_p = 0.0
+                for t in db_tasks:
+                    crit = t.asset.criticality_index if t.asset else None
+                    risk = t.asset.failure_risk_score if t.asset else None
+                    p_res = compute_priority(
+                        task_id=t.task_id,
+                        department=t.department,
+                        severity=t.severity,
+                        days_overdue=t.days_overdue,
+                        asset_id=t.asset_id,
+                        section_id=t.section_id,
+                        criticality_index=crit,
+                        failure_risk_score=risk,
+                        baseline_priority_score=t.priority_score,
+                    )
+                    total_p += p_res.computed_priority_score
+                alt_priority = round(total_p, 2)
+            else:
+                alt_priority = 0.0
+        else:
+            alt_start = base_start
+            alt_end = base_end
+            alt_duration = base_duration
+            alt_tasks = list(base_tasks)
+            alt_depts = list(base_depts)
+            alt_priority = base_priority
+
+        # 4. Check train timetable conflicts on the alternative time window
+        stmt_occs = select(TrainSectionOccupancy).where(
+            TrainSectionOccupancy.section_id == base_block.section_id
+        )
+        sec_occs = (await db.scalars(stmt_occs)).all()
+        has_conf, conf_count, conf_trains = check_train_conflicts(
+            alt_start, alt_end, sec_occs
+        )
+
+        # 5. Evaluate alternative readiness
+        alt_readiness = cls.assess_readiness(
+            block_id=base_block.id,
+            block_start=alt_start,
+            block_end=alt_end,
+            duration_hrs=alt_duration,
+            train_conflicts=conf_count,
+            resource_status=resource_val,
+            status="Candidate",
+        )
+
+        # 6. Operational impact score calculation
+        alt_is_integrated = len(alt_depts) > 1
+        alt_impact = round(max(0.0, min(100.0, 100.0 - (conf_count * 25.0) + (15.0 if alt_is_integrated else 0.0))), 1)
+
+        alternative_data = CounterfactualBlockData(
+            block_id=base_block.id,
+            optimized_block_id=opt_id_label,
+            section_id=base_block.section_id or "UNKNOWN",
+            block_start=alt_start,
+            block_end=alt_end,
+            duration_hrs=alt_duration,
+            is_integrated=alt_is_integrated,
+            departments=alt_depts,
+            task_ids=alt_tasks,
+            priority_score=alt_priority,
+            train_conflicts=conf_count,
+            conflict_trains=conf_trains,
+            estimated_impact_score=alt_impact,
+            readiness=alt_readiness,
+        )
+
+        # 7. Compute deltas
+        dur_delta = round(alt_duration - base_duration, 2)
+        prio_delta = round(alt_priority - base_priority, 2)
+        conf_delta = conf_count - base_conflicts
+        imp_delta = round(alt_impact - base_impact, 2)
+        tasks_added = [tid for tid in alt_tasks if tid not in base_tasks]
+        tasks_removed = [tid for tid in base_tasks if tid not in alt_tasks]
+
+        readiness_order = {"FAIL": 0, "REDUCE": 1, "HOLD": 2, "GO": 3}
+        base_read_score = readiness_order.get(base_readiness.readiness, 1)
+        alt_read_score = readiness_order.get(alt_readiness.readiness, 1)
+        readiness_change = "IMPROVED" if alt_read_score > base_read_score else ("DEGRADED" if alt_read_score < base_read_score else "UNCHANGED")
+
+        # 8. Determine overall rating (BETTER / WORSE / NEUTRAL)
+        if conf_delta < 0 and prio_delta >= 0 and alt_duration <= 8.0 and alt_read_score >= base_read_score:
+            rating = "BETTER"
+        elif alt_read_score > base_read_score and prio_delta >= -5.0:
+            rating = "BETTER"
+        elif prio_delta > 5.0 and conf_delta <= 0:
+            rating = "BETTER"
+        elif conf_delta > 0 or prio_delta < -10.0 or alt_duration > 8.0 or alt_read_score < base_read_score:
+            rating = "WORSE"
+        else:
+            rating = "NEUTRAL"
+
+        # 9. Natural language deterministic explanation
+        if st in ("POSTPONE", "POSTPONE_BLOCK"):
+            shift_val = postpone_hours if postpone_hours is not None else ((alt_start - base_start).total_seconds() / 3600.0)
+            explanation = (
+                f"Postponing block {opt_id_label} by {shift_val:.1f}h shifts the window to "
+                f"{alt_start.strftime('%Y-%m-%d %H:%M')}–{alt_end.strftime('%H:%M')} UTC. "
+                f"Train conflicts change by {conf_delta:+d} (from {base_conflicts} to {conf_count}). "
+                f"Priority delivered remains {alt_priority:.1f} across {len(alt_tasks)} tasks. "
+                f"Possession readiness evaluates to {alt_readiness.readiness} ({readiness_change.lower()})."
+            )
+        elif st in ("REDUCE_DURATION", "REDUCE"):
+            explanation = (
+                f"Reducing block duration from {base_duration:.2f}h to {alt_duration:.2f}h ({dur_delta:+.2f}h) "
+                f"frees corridor capacity while scheduling {len(alt_tasks)} tasks. "
+                f"Train conflicts evaluate to {conf_count} ({conf_delta:+d}). "
+                f"Priority delivered is {alt_priority:.1f}. Readiness status is {alt_readiness.readiness}."
+            )
+        elif st in ("MOVE_WINDOW", "MOVE"):
+            explanation = (
+                f"Moving block {opt_id_label} to alternative window {alt_start.strftime('%Y-%m-%d %H:%M')}–{alt_end.strftime('%H:%M')} UTC "
+                f"({alt_duration:.2f}h) results in {conf_count} train conflicts ({conf_delta:+d} vs baseline). "
+                f"Priority delivered is {alt_priority:.1f} with readiness {alt_readiness.readiness}."
+            )
+        elif st in ("CHANGE_TASKS_DEPT", "CHANGE_TASKS"):
+            explanation = (
+                f"Modifying task composition schedules {len(alt_tasks)} tasks ({len(tasks_added)} added, {len(tasks_removed)} removed), "
+                f"shifting realized priority by {prio_delta:+.1f} points (from {base_priority:.1f} to {alt_priority:.1f}). "
+                f"Train conflicts are {conf_count}. Readiness evaluates to {alt_readiness.readiness}."
+            )
+        else:
+            explanation = (
+                f"Evaluating alternative scenario on block {opt_id_label}: "
+                f"duration={alt_duration:.2f}h ({dur_delta:+.2f}h), priority={alt_priority:.1f} ({prio_delta:+.1f}), "
+                f"conflicts={conf_count} ({conf_delta:+d}), readiness={alt_readiness.readiness}."
+            )
+
+        deltas_dict = {
+            "duration_delta": dur_delta,
+            "priority_delta": prio_delta,
+            "train_conflicts_delta": conf_delta,
+            "estimated_impact_delta": imp_delta,
+            "tasks_added": tasks_added,
+            "tasks_removed": tasks_removed,
+            "readiness_change": readiness_change,
+        }
+
+        return CounterfactualComparison(
+            target_block_id=target_block_id,
+            scenario_type=scenario_type,
+            rating=rating,
+            explanation=explanation,
+            baseline=baseline_data,
+            alternative=alternative_data,
+            deltas=deltas_dict,
+        )

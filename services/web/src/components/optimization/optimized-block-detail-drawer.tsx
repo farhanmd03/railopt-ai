@@ -7,6 +7,7 @@ import { buildAuthUser } from "@/lib/auth-config";
 import {
   AdjustmentCategory,
   NegotiationAction,
+  NegotiationLog,
   NegotiationRequest,
   OptimizedBlock,
 } from "@/lib/types/optimization";
@@ -78,7 +79,7 @@ export function OptimizedBlockDetailDrawer({
     text: string;
   } | null>(null);
 
-  const [negotiations, setNegotiations] = useState<optimizationApi.NegotiationLog[]>([]);
+  const [negotiations, setNegotiations] = useState<NegotiationLog[]>([]);
   const [isLoadingNegotiations, setIsLoadingNegotiations] = useState(false);
 
   const [readiness, setReadiness] = useState<optimizationApi.PossessionReadiness | null>(null);
@@ -883,6 +884,14 @@ export function OptimizedBlockDetailDrawer({
               <MapPin className="h-3.5 w-3.5 text-blue-600" />
               <span>View on Map</span>
               <ExternalLink className="h-3 w-3 text-muted-foreground" />
+            </Link>
+
+            <Link
+              href={`/optimization/runs/${block.optimization_run_id}/what-if?block=${block.id}`}
+              className="inline-flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 px-2.5 py-1.5 rounded text-xs font-semibold shadow-xs transition-colors"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-blue-600" />
+              <span>What-If Alternatives</span>
             </Link>
 
             <ExplainButton

@@ -9,6 +9,7 @@ import urllib.parse
 import urllib.request
 
 import httpx
+import unittest
 from sqlalchemy import select
 
 # Adjust sys.path for imports
@@ -51,7 +52,7 @@ def obtain_token(username: str) -> str:
         return res["access_token"]
 
 
-class TestScenarioWeightHandling:
+class TestScenarioWeightHandling(unittest.IsolatedAsyncioTestCase):
     """Regression tests verifying weight handling logic for What‑If scenarios."""
 
     @classmethod

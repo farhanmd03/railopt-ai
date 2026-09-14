@@ -761,6 +761,161 @@ async def get_optimization_run_audit_trail(
 
 
 # ---------------------------------------------------------------------------
+def assess_block_readiness_data(
+    block_id: int,
+    block_start: datetime,
+    block_end: datetime,
+    duration_hrs: float,
+    train_conflicts: int,
+    resource_status: str = "VERIFIED",
+    status: str = "Candidate",
+) -> PossessionReadinessResponse:
+    """Deterministic readiness assessment logic for any block parameters."""
+    checks: list[ReadinessCheck] = []
+
+    # 1. Possession window
+    duration = float(duration_hrs or 0.0)
+
+    if block_start >= block_end or duration <= 0:
+        checks.append(
+            ReadinessCheck(
+                key="window",
+                label="Possession window",
+                status="FAIL",
+                message=(
+                    "The proposed block has an invalid or zero-length "
+                    "possession window."
+                ),
+            )
+        )
+    elif duration > 8.0:
+        checks.append(
+            ReadinessCheck(
+                key="window",
+                label="Possession window",
+                status="FAIL",
+                message=(
+                    f"Block duration is {duration:.2f} hours, exceeding "
+                    "the prototype safety limit of 8 hours."
+                ),
+            )
+        )
+    else:
+        checks.append(
+            ReadinessCheck(
+                key="window",
+                label="Possession window",
+                status="PASS",
+                message=f"Proposed window is valid for {duration:.2f} hours.",
+            )
+        )
+
+    # 2. Train conflicts
+    conflicts = train_conflicts or 0
+
+    if conflicts > 0:
+        checks.append(
+            ReadinessCheck(
+                key="train_conflicts",
+                label="Train conflict check",
+                status="PENDING",
+                message=(
+                    f"{conflicts} train conflict(s) remain associated "
+                    "with this proposed block."
+                ),
+            )
+        )
+    else:
+        checks.append(
+            ReadinessCheck(
+                key="train_conflicts",
+                label="Train conflict check",
+                status="PASS",
+                message="No train conflicts are recorded for this proposed block.",
+            )
+        )
+
+    # 3. Resource readiness
+    res_val = str(resource_status or "UNVERIFIED").upper()
+
+    if res_val in {"AVAILABLE", "READY", "VERIFIED"}:
+        checks.append(
+            ReadinessCheck(
+                key="resources",
+                label="Resource readiness",
+                status="PASS",
+                message="Required resources are marked as ready/verified.",
+            )
+        )
+    else:
+        checks.append(
+            ReadinessCheck(
+                key="resources",
+                label="Resource readiness",
+                status="PENDING",
+                message=(
+                    "Resource readiness is not verified in the current "
+                    "prototype data."
+                ),
+            )
+        )
+
+    # 4. Block status
+    b_status = (status or "Candidate").upper()
+
+    if b_status == "REJECTED":
+        checks.append(
+            ReadinessCheck(
+                key="block_status",
+                label="Block status",
+                status="FAIL",
+                message="This proposed block has been rejected.",
+            )
+        )
+    else:
+        checks.append(
+            ReadinessCheck(
+                key="block_status",
+                label="Block status",
+                status="PASS",
+                message=(
+                    f"Block is currently in "
+                    f"'{status or 'Candidate'}' status."
+                ),
+            )
+        )
+
+    failed = [check for check in checks if check.status == "FAIL"]
+    pending = [check for check in checks if check.status == "PENDING"]
+
+    if failed:
+        readiness = "REDUCE"
+        summary = (
+            "The proposed block requires scope reduction or correction "
+            "before operational review."
+        )
+    elif pending:
+        readiness = "HOLD"
+        summary = (
+            "The proposed block has unresolved readiness items and "
+            "should remain on hold."
+        )
+    else:
+        readiness = "GO"
+        summary = (
+            "All prototype readiness checks pass. Final possession "
+            "approval remains a human decision."
+        )
+
+    return PossessionReadinessResponse(
+        block_id=block_id,
+        readiness=readiness,
+        summary=summary,
+        checks=checks,
+        human_decision_required=True,
+    )
+
+
 # Possession Readiness Gate
 # ---------------------------------------------------------------------------
 
@@ -802,73 +957,7 @@ async def get_block_readiness(
             detail=f"Optimized block '{block_id}' was not found.",
         )
 
-    checks: list[ReadinessCheck] = []
-
-    # 1. Possession window
-    duration = float(block.block_duration_hrs or 0.0)
-
-    if block.block_start >= block.block_end or duration <= 0:
-        checks.append(
-            ReadinessCheck(
-                key="window",
-                label="Possession window",
-                status="FAIL",
-                message=(
-                    "The proposed block has an invalid or zero-length "
-                    "possession window."
-                ),
-            )
-        )
-    elif duration > 8.0:
-        checks.append(
-            ReadinessCheck(
-                key="window",
-                label="Possession window",
-                status="FAIL",
-                message=(
-                    f"Block duration is {duration:.2f} hours, exceeding "
-                    "the prototype safety limit of 8 hours."
-                ),
-            )
-        )
-    else:
-        checks.append(
-            ReadinessCheck(
-                key="window",
-                label="Possession window",
-                status="PASS",
-                message=f"Proposed window is valid for {duration:.2f} hours.",
-            )
-        )
-
-    # 2. Train conflicts
-    train_conflicts = block.train_conflicts or 0
-
-    if train_conflicts > 0:
-        checks.append(
-            ReadinessCheck(
-                key="train_conflicts",
-                label="Train conflict check",
-                status="PENDING",
-                message=(
-                    f"{train_conflicts} train conflict(s) remain associated "
-                    "with this proposed block."
-                ),
-            )
-        )
-    else:
-        checks.append(
-            ReadinessCheck(
-                key="train_conflicts",
-                label="Train conflict check",
-                status="PASS",
-                message="No train conflicts are recorded for this proposed block.",
-            )
-        )
-
-    # 3. Resource readiness
     resource_value = "UNVERIFIED"
-
     if block.explanation:
         try:
             explanation_data = json.loads(block.explanation)
@@ -881,81 +970,18 @@ async def get_block_readiness(
         except Exception:
             resource_value = "UNVERIFIED"
 
-    if resource_value in {"AVAILABLE", "READY", "VERIFIED"}:
-        checks.append(
-            ReadinessCheck(
-                key="resources",
-                label="Resource readiness",
-                status="PASS",
-                message="Required resources are marked as ready/verified.",
-            )
-        )
-    else:
-        checks.append(
-            ReadinessCheck(
-                key="resources",
-                label="Resource readiness",
-                status="PENDING",
-                message=(
-                    "Resource readiness is not verified in the current "
-                    "prototype data."
-                ),
-            )
-        )
+    dur = float(block.block_duration_hrs or 0.0)
+    conflicts = block.train_conflicts or 0
+    b_stat = block.status or "Candidate"
 
-    # 4. Block status
-    block_status = (block.status or "Candidate").upper()
-
-    if block_status == "REJECTED":
-        checks.append(
-            ReadinessCheck(
-                key="block_status",
-                label="Block status",
-                status="FAIL",
-                message="This proposed block has been rejected.",
-            )
-        )
-    else:
-        checks.append(
-            ReadinessCheck(
-                key="block_status",
-                label="Block status",
-                status="PASS",
-                message=(
-                    f"Block is currently in "
-                    f"'{block.status or 'Candidate'}' status."
-                ),
-            )
-        )
-
-    failed = [check for check in checks if check.status == "FAIL"]
-    pending = [check for check in checks if check.status == "PENDING"]
-
-    if failed:
-        readiness = "REDUCE"
-        summary = (
-            "The proposed block requires scope reduction or correction "
-            "before operational review."
-        )
-    elif pending:
-        readiness = "HOLD"
-        summary = (
-            "The proposed block has unresolved readiness items and "
-            "should remain on hold."
-        )
-    else:
-        readiness = "GO"
-        summary = (
-            "All prototype readiness checks pass. Final possession "
-            "approval remains a human decision."
-        )
-
-    return PossessionReadinessResponse(
+    return assess_block_readiness_data(
         block_id=block.id,
-        readiness=readiness,
-        summary=summary,
-        checks=checks,
-        human_decision_required=True,
+        block_start=block.block_start,
+        block_end=block.block_end,
+        duration_hrs=dur,
+        train_conflicts=conflicts,
+        resource_status=resource_value,
+        status=b_stat,
     )
 
 

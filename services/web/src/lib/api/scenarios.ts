@@ -4,6 +4,8 @@
 
 import { apiGet, apiPost } from "../api-client";
 import {
+  BlockCounterfactualRequest,
+  CounterfactualComparison,
   OptimizationScenario,
   ScenarioCreatePayload,
   ScenarioListResponse,
@@ -28,5 +30,15 @@ export function createRunScenario(
 export function getScenarioDetail(scenarioId: string | number): Promise<OptimizationScenario> {
   return apiGet<OptimizationScenario>(
     `/api/v1/optimization/scenarios/${encodeURIComponent(String(scenarioId))}`
+  );
+}
+
+export function evaluateBlockCounterfactual(
+  blockId: string | number,
+  payload: BlockCounterfactualRequest
+): Promise<CounterfactualComparison> {
+  return apiPost<CounterfactualComparison>(
+    `/api/v1/optimization/blocks/${encodeURIComponent(String(blockId))}/counterfactual`,
+    payload
   );
 }
