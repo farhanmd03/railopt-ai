@@ -1,10 +1,15 @@
-"""Optimization API router with RBAC role authorization (Batch 6B.3).
+"""Optimization API router with RBAC role authorization.
 
 Endpoints:
-- POST /api/v1/optimization/runs: Trigger CP-SAT mathematical solve and persist results (ADMIN, PLANNER, CONTROL).
-- GET  /api/v1/optimization/runs: List historical optimization runs with pagination and filtering.
-- GET  /api/v1/optimization/runs/{run_id}: Retrieve optimization run summary and metadata.
-- GET  /api/v1/optimization/runs/{run_id}/blocks: Retrieve paginated scheduled blocks for a specific run.
+- POST /api/v1/optimization/runs: Trigger CP-SAT mathematical solve and persist results.
+- GET  /api/v1/optimization/runs: List historical optimization runs.
+- GET  /api/v1/optimization/runs/{run_id}: Retrieve optimization run summary.
+- GET  /api/v1/optimization/runs/{run_id}/blocks: Retrieve scheduled blocks.
+- POST /api/v1/optimization/runs/{run_id}/submit: Submit a run for human review.
+- POST /api/v1/optimization/runs/{run_id}/approve: Approve a submitted run.
+- POST /api/v1/optimization/runs/{run_id}/reject: Reject a submitted run.
+- GET  /api/v1/optimization/runs/{run_id}/audit: Retrieve the run audit trail.
+- GET  /api/v1/optimization/blocks/{block_id}/readiness: Assess possession readiness.
 """
 
 from __future__ import annotations
@@ -40,6 +45,10 @@ from app.schemas.optimization import (
     OptimizedBlockResponse,
     OptimizedBlocksListResponse,
 )
+from app.schemas.readiness import (
+    PossessionReadinessResponse,
+    ReadinessCheck,
+)
 from app.services.optimization_service import OptimizationService
 
 logger = logging.getLogger(__name__)
@@ -65,28 +74,45 @@ OPTIMIZATION_READ_ROLES = (
 def _format_block_response(block: OptimizedBlock) -> OptimizedBlockResponse:
     """Format an OptimizedBlock ORM entity into a clean Pydantic response."""
     expl_data: dict[str, Any] = {}
+
     if block.explanation:
         try:
             expl_data = json.loads(block.explanation)
         except Exception:
             expl_data = {"raw": block.explanation}
 
-    depts = [d.strip() for d in block.departments_involved.split(",")] if block.departments_involved else []
+    depts = (
+        [d.strip() for d in block.departments_involved.split(",")]
+        if block.departments_involved
+        else []
+    )
     t_ids = [t.task_id for t in block.tasks] if block.tasks else []
 
-    dur = float(block.block_duration_hrs) if block.block_duration_hrs is not None else 0.0
-    prio = float(block.priority_score) if block.priority_score is not None else 0.0
+    dur = (
+        float(block.block_duration_hrs)
+        if block.block_duration_hrs is not None
+        else 0.0
+    )
+    prio = (
+        float(block.priority_score)
+        if block.priority_score is not None
+        else 0.0
+    )
 
     return OptimizedBlockResponse(
         id=block.id,
         optimization_run_id=block.optimization_run_id,
-        optimized_block_id=expl_data.get("optimized_block_id", f"OPT-BLK-{block.id:04d}"),
+        optimized_block_id=expl_data.get(
+            "optimized_block_id",
+            f"OPT-BLK-{block.id:04d}",
+        ),
         candidate_id=expl_data.get("candidate_id"),
         section_id=block.section_id or "UNKNOWN",
         block_start=block.block_start,
         block_end=block.block_end,
         block_duration_hrs=dur,
-        block_type=block.block_type or ("integrated" if block.is_integrated else "single"),
+        block_type=block.block_type
+        or ("integrated" if block.is_integrated else "single"),
         is_integrated=bool(block.is_integrated),
         departments_involved=depts,
         realized_priority_value=prio,
@@ -105,6 +131,7 @@ def _format_block_response(block: OptimizedBlock) -> OptimizedBlockResponse:
 def _format_run_response(run: OptimizationRun) -> OptimizationRunResponse:
     """Format an OptimizationRun ORM entity into a clean Pydantic response."""
     param_data: dict[str, Any] = {}
+
     if run.parameters:
         try:
             param_data = json.loads(run.parameters)
@@ -129,7 +156,10 @@ def _format_run_response(run: OptimizationRun) -> OptimizationRunResponse:
         tasks_unassigned=metrics.get("tasks_unassigned", 0),
         integrated_block_count=metrics.get("integrated_block_count", 0),
         separate_block_count=metrics.get("separate_block_count", 0),
-        estimated_total_block_hours=metrics.get("estimated_total_block_hours", 0.0),
+        estimated_total_block_hours=metrics.get(
+            "estimated_total_block_hours",
+            0.0,
+        ),
         unassigned_task_ids=param_data.get("unassigned_tasks", []),
         warnings=param_data.get("warnings", []),
         notes=run.notes,
@@ -145,17 +175,23 @@ def _format_run_response(run: OptimizationRun) -> OptimizationRunResponse:
     )
 
 
-async def _resolve_run(run_id_param: str, db: AsyncSession) -> OptimizationRun:
+async def _resolve_run(
+    run_id_param: str,
+    db: AsyncSession,
+) -> OptimizationRun:
     """Resolve an OptimizationRun by integer ID or string run_id identifier."""
     if run_id_param.isdigit():
         stmt = (
             select(OptimizationRun)
             .options(
-                selectinload(OptimizationRun.optimized_blocks).selectinload(OptimizedBlock.tasks)
+                selectinload(OptimizationRun.optimized_blocks).selectinload(
+                    OptimizedBlock.tasks
+                )
             )
             .where(OptimizationRun.id == int(run_id_param))
         )
         run = (await db.scalars(stmt)).first()
+
         if run:
             return run
 
@@ -163,16 +199,21 @@ async def _resolve_run(run_id_param: str, db: AsyncSession) -> OptimizationRun:
     stmt = (
         select(OptimizationRun)
         .options(
-            selectinload(OptimizationRun.optimized_blocks).selectinload(OptimizedBlock.tasks)
+            selectinload(OptimizationRun.optimized_blocks).selectinload(
+                OptimizedBlock.tasks
+            )
         )
         .where(OptimizationRun.parameters.like(f'%"{run_id_param}"%'))
     )
+
     run = (await db.scalars(stmt)).first()
+
     if not run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Optimization run '{run_id_param}' was not found.",
         )
+
     return run
 
 
@@ -180,17 +221,18 @@ async def _resolve_run(run_id_param: str, db: AsyncSession) -> OptimizationRun:
     "/runs",
     response_model=OptimizationRunResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Trigger optimization run (RBAC: ADMIN, PLANNER, CONTROL)",
+    summary="Trigger optimization run",
     description=(
-        "Executes the in-memory Google OR-Tools CP-SAT mathematical solver over the authentic railway dataset "
-        "and transactionally persists the resulting schedule recommendations into PostgreSQL.\n\n"
-        "**Decision Support Disclaimer**: The output represents algorithmic candidate recommendations ('status': 'Candidate') "
-        "and is NOT an officially approved railway block possession schedule until ratified by human authorities."
+        "Executes the in-memory Google OR-Tools CP-SAT mathematical solver "
+        "over the railway dataset and persists schedule recommendations.\n\n"
+        "**Decision Support Disclaimer**: The output represents algorithmic "
+        "candidate recommendations and is NOT an officially approved railway "
+        "block possession schedule until ratified by human authorities."
     ),
     responses={
         201: {"description": "Optimization run completed and persisted successfully"},
         401: {"description": "Missing, invalid, or expired authentication token"},
-        403: {"description": "Insufficient role privileges (requires ADMIN, PLANNER, or CONTROL)"},
+        403: {"description": "Insufficient role privileges"},
         422: {"description": "Invalid input parameters"},
         500: {"description": "Server or solver execution failure"},
     },
@@ -200,8 +242,7 @@ async def create_optimization_run(
     current_user: User = Depends(require_roles(*OPTIMIZATION_TRIGGER_ROLES)),
     db: AsyncSession = Depends(get_db),
 ) -> OptimizationRunResponse:
-    """Initiate a CP-SAT optimization solve with optional constraint/weight overrides."""
-    # Build ObjectiveWeights with safe caller overrides
+    """Initiate a CP-SAT optimization solve."""
     weights = ObjectiveWeights(
         weight_priority_score=(
             payload.weight_priority_score
@@ -245,7 +286,6 @@ async def create_optimization_run(
         ),
     )
 
-    # Build HardConstraintConfig
     constraints = HardConstraintConfig(
         max_block_duration_hrs=payload.max_block_duration_hrs,
         allow_train_conflict=payload.allow_train_conflicts,
@@ -263,7 +303,9 @@ async def create_optimization_run(
             time_limit_seconds=payload.solver_time_limit_seconds,
             run_type=payload.run_type,
         )
+
         return _format_run_response(run_record)
+
     except Exception as e:
         logger.exception("Failed to execute optimization run: %s", e)
         raise HTTPException(
@@ -275,30 +317,38 @@ async def create_optimization_run(
 @router.get(
     "/runs",
     response_model=OptimizationRunsListResponse,
-    summary="List historical optimization runs (RBAC Protected)",
-    description=(
-        "Retrieve a paginated list of historical optimization runs.\n\n"
-        "Requires authentication and one of: ADMIN, PLANNER, CONTROL, APPROVER, VIEWER, ENGINEERING, SNT, TRD."
-    ),
-    responses={
-        401: {"description": "Missing, invalid, or expired authentication token"},
-        403: {"description": "Insufficient role privileges"},
-    },
+    summary="List historical optimization runs",
 )
 async def list_optimization_runs(
-    status_filter: str | None = Query(None, alias="status", description="Filter by status ('Completed', 'Failed')"),
-    solver_status: str | None = Query(None, description="Filter by solver status ('OPTIMAL', 'FEASIBLE', 'INFEASIBLE')"),
+    status_filter: str | None = Query(
+        None,
+        alias="status",
+        description="Filter by execution status.",
+    ),
+    solver_status: str | None = Query(
+        None,
+        description="Filter by solver status.",
+    ),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    page_size: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
+    page_size: int = Query(
+        20,
+        ge=1,
+        le=100,
+        description="Items per page (max 100)",
+    ),
     current_user: User = Depends(require_roles(*OPTIMIZATION_READ_ROLES)),
     db: AsyncSession = Depends(get_db),
 ) -> OptimizationRunsListResponse:
     """List historical optimization runs with pagination."""
     base_query = select(OptimizationRun)
+
     if status_filter:
         base_query = base_query.where(OptimizationRun.status == status_filter)
+
     if solver_status:
-        base_query = base_query.where(OptimizationRun.solver_status == solver_status)
+        base_query = base_query.where(
+            OptimizationRun.solver_status == solver_status
+        )
 
     total = (
         await db.scalar(
@@ -311,6 +361,7 @@ async def list_optimization_runs(
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
+
     runs = (await db.scalars(stmt)).all()
     total_pages = math.ceil(total / page_size) if total > 0 else 0
 
@@ -326,27 +377,19 @@ async def list_optimization_runs(
 @router.get(
     "/runs/{run_id}",
     response_model=OptimizationRunDetailResponse,
-    summary="Get optimization run details (RBAC Protected)",
-    description=(
-        "Retrieve comprehensive optimization run results and metadata by run ID.\n\n"
-        "Requires authentication and one of: ADMIN, PLANNER, CONTROL, APPROVER, VIEWER, ENGINEERING, SNT, TRD."
-    ),
-    responses={
-        401: {"description": "Missing, invalid, or expired authentication token"},
-        403: {"description": "Insufficient role privileges"},
-        404: {"description": "Optimization run not found"},
-    },
+    summary="Get optimization run details",
 )
 async def get_optimization_run(
     run_id: str,
     current_user: User = Depends(require_roles(*OPTIMIZATION_READ_ROLES)),
     db: AsyncSession = Depends(get_db),
 ) -> OptimizationRunDetailResponse:
-    """Retrieve detailed optimization run including scheduled block recommendations."""
+    """Retrieve detailed optimization run including scheduled blocks."""
     run = await _resolve_run(run_id, db)
     run_resp = _format_run_response(run)
 
     blocks = [_format_block_response(b) for b in run.optimized_blocks]
+
     return OptimizationRunDetailResponse(
         **run_resp.model_dump(),
         scheduled_blocks=blocks,
@@ -356,27 +399,29 @@ async def get_optimization_run(
 @router.get(
     "/runs/{run_id}/blocks",
     response_model=OptimizedBlocksListResponse,
-    summary="Get scheduled blocks for an optimization run (RBAC Protected)",
-    description=(
-        "Retrieve paginated scheduled maintenance blocks for a specific optimization run.\n\n"
-        "Requires authentication and one of: ADMIN, PLANNER, CONTROL, APPROVER, VIEWER, ENGINEERING, SNT, TRD."
-    ),
-    responses={
-        401: {"description": "Missing, invalid, or expired authentication token"},
-        403: {"description": "Insufficient role privileges"},
-        404: {"description": "Optimization run not found"},
-    },
+    summary="Get scheduled blocks for an optimization run",
 )
 async def get_optimization_run_blocks(
     run_id: str,
-    section_id: str | None = Query(None, description="Filter by railway section ID"),
-    is_integrated: bool | None = Query(None, description="Filter by integrated block flag"),
+    section_id: str | None = Query(
+        None,
+        description="Filter by railway section ID",
+    ),
+    is_integrated: bool | None = Query(
+        None,
+        description="Filter by integrated block flag",
+    ),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    page_size: int = Query(20, ge=1, le=100, description="Items per page (max 100)"),
+    page_size: int = Query(
+        20,
+        ge=1,
+        le=100,
+        description="Items per page (max 100)",
+    ),
     current_user: User = Depends(require_roles(*OPTIMIZATION_READ_ROLES)),
     db: AsyncSession = Depends(get_db),
 ) -> OptimizedBlocksListResponse:
-    """Retrieve paginated blocks strictly belonging to the specified optimization run."""
+    """Retrieve paginated blocks for a run."""
     run = await _resolve_run(run_id, db)
 
     base_query = (
@@ -387,8 +432,11 @@ async def get_optimization_run_blocks(
 
     if section_id:
         base_query = base_query.where(OptimizedBlock.section_id == section_id)
+
     if is_integrated is not None:
-        base_query = base_query.where(OptimizedBlock.is_integrated == is_integrated)
+        base_query = base_query.where(
+            OptimizedBlock.is_integrated == is_integrated
+        )
 
     total = (
         await db.scalar(
@@ -401,6 +449,7 @@ async def get_optimization_run_blocks(
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
+
     blocks = (await db.scalars(stmt)).all()
     total_pages = math.ceil(total / page_size) if total > 0 else 0
 
@@ -413,7 +462,9 @@ async def get_optimization_run_blocks(
     )
 
 
-# ── Human Approval Workflow Endpoints (Batch 7J) ──────────────────────────
+# ---------------------------------------------------------------------------
+# Human Approval Workflow
+# ---------------------------------------------------------------------------
 
 PLANNER_SUBMIT_ROLES = ("ADMIN", "PLANNER")
 APPROVER_ROLES = ("ADMIN", "APPROVER")
@@ -423,18 +474,7 @@ APPROVER_ROLES = ("ADMIN", "APPROVER")
     "/runs/{run_id}/submit",
     response_model=OptimizationRunResponse,
     status_code=status.HTTP_200_OK,
-    summary="Submit optimization run for human review (RBAC: ADMIN, PLANNER)",
-    description=(
-        "Transitions an optimization run from DRAFT (or REJECTED) into SUBMITTED for human operational review. "
-        "Atomically persists the state change and records an immutable audit log entry."
-    ),
-    responses={
-        200: {"description": "Optimization run successfully submitted for review"},
-        401: {"description": "Missing, invalid, or expired authentication token"},
-        403: {"description": "Insufficient role privileges (requires ADMIN or PLANNER)"},
-        404: {"description": "Optimization run not found"},
-        409: {"description": "Invalid state transition or concurrency conflict"},
-    },
+    summary="Submit optimization run for human review",
 )
 async def submit_optimization_run(
     run_id: str,
@@ -451,11 +491,13 @@ async def submit_optimization_run(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Optimization run '{run_id}' is already submitted for approval.",
             )
+
         if current_status == "APPROVED":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Optimization run '{run_id}' has already been officially approved.",
             )
+
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Cannot submit optimization run in state '{current_status}'.",
@@ -464,13 +506,11 @@ async def submit_optimization_run(
     now = datetime.now(timezone.utc)
     prev_status = current_status
 
-    # State update
     run.approval_status = "SUBMITTED"
     run.submitted_by = current_user.username
     run.submitted_at = now
-    run.rejection_reason = None  # Clear prior rejection note on resubmit
+    run.rejection_reason = None
 
-    # Atomic audit log creation
     audit_event = AuditLog(
         timestamp=now,
         user_id=current_user.username,
@@ -478,13 +518,16 @@ async def submit_optimization_run(
         entity_type="OptimizationRun",
         entity_id=str(run.id),
         before_value=json.dumps({"approval_status": prev_status}),
-        after_value=json.dumps({
-            "approval_status": "SUBMITTED",
-            "submitted_by": current_user.username,
-            "submitted_at": now.isoformat(),
-        }),
+        after_value=json.dumps(
+            {
+                "approval_status": "SUBMITTED",
+                "submitted_by": current_user.username,
+                "submitted_at": now.isoformat(),
+            }
+        ),
         details="Optimization plan submitted for human operational review.",
     )
+
     db.add(audit_event)
 
     await db.commit()
@@ -495,6 +538,7 @@ async def submit_optimization_run(
         run.id,
         current_user.username,
     )
+
     return _format_run_response(run)
 
 
@@ -502,19 +546,7 @@ async def submit_optimization_run(
     "/runs/{run_id}/approve",
     response_model=OptimizationRunResponse,
     status_code=status.HTTP_200_OK,
-    summary="Approve optimization plan (RBAC: ADMIN, APPROVER)",
-    description=(
-        "Officially approves a SUBMITTED optimization plan for railway possession execution. "
-        "Atomically persists the approval status and creates an immutable audit trail entry. "
-        "Does NOT alter mathematical solver outputs or block schedules."
-    ),
-    responses={
-        200: {"description": "Optimization plan officially approved"},
-        401: {"description": "Missing, invalid, or expired authentication token"},
-        403: {"description": "Insufficient role privileges (requires ADMIN or APPROVER)"},
-        404: {"description": "Optimization run not found"},
-        409: {"description": "Invalid state transition or concurrency conflict"},
-    },
+    summary="Approve optimization plan",
 )
 async def approve_optimization_run(
     run_id: str,
@@ -531,16 +563,25 @@ async def approve_optimization_run(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Optimization run '{run_id}' is already approved.",
             )
+
         if current_status == "DRAFT":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Optimization run '{run_id}' must be submitted for review before it can be approved.",
+                detail=(
+                    f"Optimization run '{run_id}' must be submitted for review "
+                    "before it can be approved."
+                ),
             )
+
         if current_status == "REJECTED":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Rejected optimization run '{run_id}' cannot be approved directly. It must be resubmitted first.",
+                detail=(
+                    f"Rejected optimization run '{run_id}' cannot be approved "
+                    "directly. It must be resubmitted first."
+                ),
             )
+
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Cannot approve optimization run in state '{current_status}'.",
@@ -549,12 +590,10 @@ async def approve_optimization_run(
     now = datetime.now(timezone.utc)
     prev_status = current_status
 
-    # State update
     run.approval_status = "APPROVED"
     run.approved_by = current_user.username
     run.approved_at = now
 
-    # Atomic audit log creation
     audit_event = AuditLog(
         timestamp=now,
         user_id=current_user.username,
@@ -562,13 +601,16 @@ async def approve_optimization_run(
         entity_type="OptimizationRun",
         entity_id=str(run.id),
         before_value=json.dumps({"approval_status": prev_status}),
-        after_value=json.dumps({
-            "approval_status": "APPROVED",
-            "approved_by": current_user.username,
-            "approved_at": now.isoformat(),
-        }),
+        after_value=json.dumps(
+            {
+                "approval_status": "APPROVED",
+                "approved_by": current_user.username,
+                "approved_at": now.isoformat(),
+            }
+        ),
         details="Optimization plan officially approved by operational authority.",
     )
+
     db.add(audit_event)
 
     await db.commit()
@@ -579,6 +621,7 @@ async def approve_optimization_run(
         run.id,
         current_user.username,
     )
+
     return _format_run_response(run)
 
 
@@ -586,19 +629,7 @@ async def approve_optimization_run(
     "/runs/{run_id}/reject",
     response_model=OptimizationRunResponse,
     status_code=status.HTTP_200_OK,
-    summary="Reject optimization plan with mandatory reason (RBAC: ADMIN, APPROVER)",
-    description=(
-        "Rejects a SUBMITTED optimization plan. Requires a mandatory meaningful explanation (min 5 characters). "
-        "Atomically persists the rejection state and records an immutable audit log entry."
-    ),
-    responses={
-        200: {"description": "Optimization plan successfully rejected"},
-        401: {"description": "Missing, invalid, or expired authentication token"},
-        403: {"description": "Insufficient role privileges (requires ADMIN or APPROVER)"},
-        404: {"description": "Optimization run not found"},
-        409: {"description": "Invalid state transition or concurrency conflict"},
-        422: {"description": "Invalid payload (missing or too short rejection reason)"},
-    },
+    summary="Reject optimization plan",
 )
 async def reject_optimization_run(
     run_id: str,
@@ -606,7 +637,7 @@ async def reject_optimization_run(
     current_user: User = Depends(require_roles(*APPROVER_ROLES)),
     db: AsyncSession = Depends(get_db),
 ) -> OptimizationRunResponse:
-    """Reject a submitted optimization run with recorded explanation."""
+    """Reject a submitted optimization run with a meaningful reason."""
     run = await _resolve_run(run_id, db)
     current_status = run.approval_status or "DRAFT"
 
@@ -616,16 +647,22 @@ async def reject_optimization_run(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Cannot reject an already approved optimization run '{run_id}'.",
             )
+
         if current_status == "REJECTED":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Optimization run '{run_id}' is already rejected.",
             )
+
         if current_status == "DRAFT":
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Optimization run '{run_id}' must be submitted for review before it can be rejected.",
+                detail=(
+                    f"Optimization run '{run_id}' must be submitted for review "
+                    "before it can be rejected."
+                ),
             )
+
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Cannot reject optimization run in state '{current_status}'.",
@@ -635,13 +672,11 @@ async def reject_optimization_run(
     prev_status = current_status
     clean_reason = payload.reason.strip()
 
-    # State update
     run.approval_status = "REJECTED"
     run.rejected_by = current_user.username
     run.rejected_at = now
     run.rejection_reason = clean_reason
 
-    # Atomic audit log creation
     audit_event = AuditLog(
         timestamp=now,
         user_id=current_user.username,
@@ -649,14 +684,17 @@ async def reject_optimization_run(
         entity_type="OptimizationRun",
         entity_id=str(run.id),
         before_value=json.dumps({"approval_status": prev_status}),
-        after_value=json.dumps({
-            "approval_status": "REJECTED",
-            "rejected_by": current_user.username,
-            "rejected_at": now.isoformat(),
-            "rejection_reason": clean_reason,
-        }),
+        after_value=json.dumps(
+            {
+                "approval_status": "REJECTED",
+                "rejected_by": current_user.username,
+                "rejected_at": now.isoformat(),
+                "rejection_reason": clean_reason,
+            }
+        ),
         details=clean_reason,
     )
+
     db.add(audit_event)
 
     await db.commit()
@@ -668,6 +706,7 @@ async def reject_optimization_run(
         current_user.username,
         clean_reason,
     )
+
     return _format_run_response(run)
 
 
@@ -675,14 +714,7 @@ async def reject_optimization_run(
     "/runs/{run_id}/audit",
     response_model=AuditLogListResponse,
     status_code=status.HTTP_200_OK,
-    summary="Get chronological audit trail for optimization run (RBAC: Authenticated Users)",
-    description="Retrieves the immutable, chronological audit trail of all state transitions and review decisions for this optimization run.",
-    responses={
-        200: {"description": "List of chronological audit log entries"},
-        401: {"description": "Missing, invalid, or expired authentication token"},
-        403: {"description": "Insufficient role privileges"},
-        404: {"description": "Optimization run not found"},
-    },
+    summary="Get chronological audit trail for optimization run",
 )
 async def get_optimization_run_audit_trail(
     run_id: str,
@@ -700,6 +732,7 @@ async def get_optimization_run_audit_trail(
         )
         .order_by(AuditLog.timestamp.asc(), AuditLog.id.asc())
     )
+
     audit_logs = (await db.scalars(stmt)).all()
 
     return AuditLogListResponse(
@@ -721,3 +754,201 @@ async def get_optimization_run_audit_trail(
         total=len(audit_logs),
     )
 
+
+# ---------------------------------------------------------------------------
+# Possession Readiness Gate
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/blocks/{block_id}/readiness",
+    response_model=PossessionReadinessResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Assess possession readiness for a proposed maintenance block",
+    description=(
+        "Returns a deterministic readiness assessment for a proposed "
+        "maintenance block. This is decision support only and never grants "
+        "railway possession authority."
+    ),
+    responses={
+        200: {"description": "Readiness assessment returned"},
+        401: {"description": "Missing, invalid, or expired authentication token"},
+        403: {"description": "Insufficient role privileges"},
+        404: {"description": "Optimized block not found"},
+    },
+)
+async def get_block_readiness(
+    block_id: int,
+    current_user: User = Depends(require_roles(*OPTIMIZATION_READ_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> PossessionReadinessResponse:
+    """Assess readiness of a proposed maintenance block."""
+
+    stmt = (
+        select(OptimizedBlock)
+        .options(selectinload(OptimizedBlock.tasks))
+        .where(OptimizedBlock.id == block_id)
+    )
+
+    block = (await db.scalars(stmt)).first()
+
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Optimized block '{block_id}' was not found.",
+        )
+
+    checks: list[ReadinessCheck] = []
+
+    # 1. Possession window
+    duration = float(block.block_duration_hrs or 0.0)
+
+    if block.block_start >= block.block_end or duration <= 0:
+        checks.append(
+            ReadinessCheck(
+                key="window",
+                label="Possession window",
+                status="FAIL",
+                message=(
+                    "The proposed block has an invalid or zero-length "
+                    "possession window."
+                ),
+            )
+        )
+    elif duration > 8.0:
+        checks.append(
+            ReadinessCheck(
+                key="window",
+                label="Possession window",
+                status="FAIL",
+                message=(
+                    f"Block duration is {duration:.2f} hours, exceeding "
+                    "the prototype safety limit of 8 hours."
+                ),
+            )
+        )
+    else:
+        checks.append(
+            ReadinessCheck(
+                key="window",
+                label="Possession window",
+                status="PASS",
+                message=f"Proposed window is valid for {duration:.2f} hours.",
+            )
+        )
+
+    # 2. Train conflicts
+    train_conflicts = block.train_conflicts or 0
+
+    if train_conflicts > 0:
+        checks.append(
+            ReadinessCheck(
+                key="train_conflicts",
+                label="Train conflict check",
+                status="PENDING",
+                message=(
+                    f"{train_conflicts} train conflict(s) remain associated "
+                    "with this proposed block."
+                ),
+            )
+        )
+    else:
+        checks.append(
+            ReadinessCheck(
+                key="train_conflicts",
+                label="Train conflict check",
+                status="PASS",
+                message="No train conflicts are recorded for this proposed block.",
+            )
+        )
+
+    # 3. Resource readiness
+    resource_value = "UNVERIFIED"
+
+    if block.explanation:
+        try:
+            explanation_data = json.loads(block.explanation)
+            resource_value = str(
+                explanation_data.get(
+                    "resource_status",
+                    "UNVERIFIED",
+                )
+            ).upper()
+        except Exception:
+            resource_value = "UNVERIFIED"
+
+    if resource_value in {"AVAILABLE", "READY", "VERIFIED"}:
+        checks.append(
+            ReadinessCheck(
+                key="resources",
+                label="Resource readiness",
+                status="PASS",
+                message="Required resources are marked as ready/verified.",
+            )
+        )
+    else:
+        checks.append(
+            ReadinessCheck(
+                key="resources",
+                label="Resource readiness",
+                status="PENDING",
+                message=(
+                    "Resource readiness is not verified in the current "
+                    "prototype data."
+                ),
+            )
+        )
+
+    # 4. Block status
+    block_status = (block.status or "Candidate").upper()
+
+    if block_status == "REJECTED":
+        checks.append(
+            ReadinessCheck(
+                key="block_status",
+                label="Block status",
+                status="FAIL",
+                message="This proposed block has been rejected.",
+            )
+        )
+    else:
+        checks.append(
+            ReadinessCheck(
+                key="block_status",
+                label="Block status",
+                status="PASS",
+                message=(
+                    f"Block is currently in "
+                    f"'{block.status or 'Candidate'}' status."
+                ),
+            )
+        )
+
+    failed = [check for check in checks if check.status == "FAIL"]
+    pending = [check for check in checks if check.status == "PENDING"]
+
+    if failed:
+        readiness = "REDUCE"
+        summary = (
+            "The proposed block requires scope reduction or correction "
+            "before operational review."
+        )
+    elif pending:
+        readiness = "HOLD"
+        summary = (
+            "The proposed block has unresolved readiness items and "
+            "should remain on hold."
+        )
+    else:
+        readiness = "GO"
+        summary = (
+            "All prototype readiness checks pass. Final possession "
+            "approval remains a human decision."
+        )
+
+    return PossessionReadinessResponse(
+        block_id=block.id,
+        readiness=readiness,
+        summary=summary,
+        checks=checks,
+        human_decision_required=True,
+    )

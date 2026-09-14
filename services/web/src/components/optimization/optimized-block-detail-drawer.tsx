@@ -1,8 +1,10 @@
 "use client";
 
 import React, { useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { OptimizedBlock } from "@/lib/types/optimization";
+import * as optimizationApi from "@/lib/api/optimization";
 import { formatDateTime, formatDuration, formatScore } from "@/lib/utils";
 import {
   AlertCircle,
@@ -12,8 +14,6 @@ import {
   ExternalLink,
   Layers,
   MapPin,
-  Package,
-  Shield,
   Sparkles,
   Train,
   Wrench,
@@ -39,9 +39,25 @@ export function OptimizedBlockDetailDrawer({
         onClose();
       }
     };
+
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, [isOpen, onClose]);
+
+  const readinessQuery = useQuery({
+    queryKey: ["block-readiness", block?.id],
+    queryFn: () => {
+      if (!block) {
+        throw new Error("No optimization block selected.");
+      }
+
+      return optimizationApi.getBlockReadiness(block.id);
+    },
+    enabled: isOpen && !!block,
+  });
 
   if (!isOpen || !block) return null;
 
@@ -73,6 +89,7 @@ export function OptimizedBlockDetailDrawer({
               <span className="font-mono text-sm font-extrabold text-foreground bg-background px-2.5 py-0.5 rounded border border-border">
                 {block.optimized_block_id}
               </span>
+
               {isIntegrated ? (
                 <span className="rounded bg-purple-50 dark:bg-purple-950 px-2 py-0.5 text-[11px] font-bold text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
                   Integrated Joint Block
@@ -82,11 +99,16 @@ export function OptimizedBlockDetailDrawer({
                   Single-Dept Block
                 </span>
               )}
+
               <span className="inline-block rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
                 {block.status || "Candidate"}
               </span>
             </div>
-            <h2 id="block-detail-title" className="text-base font-bold text-foreground pt-1">
+
+            <h2
+              id="block-detail-title"
+              className="text-base font-bold text-foreground pt-1"
+            >
               Optimized Possession Recommendation
             </h2>
           </div>
@@ -114,6 +136,7 @@ export function OptimizedBlockDetailDrawer({
                 {block.section_id}
               </span>
             </div>
+
             <div>
               <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
                 Block Duration
@@ -122,6 +145,7 @@ export function OptimizedBlockDetailDrawer({
                 {formatDuration(block.block_duration_hrs)}
               </span>
             </div>
+
             <div>
               <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
                 Realized Priority
@@ -130,13 +154,16 @@ export function OptimizedBlockDetailDrawer({
                 {formatScore(block.realized_priority_value)}
               </span>
             </div>
+
             <div>
               <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
                 Resource Status
               </span>
               <span
                 className={`inline-block font-semibold mt-0.5 ${
-                  resourceStatus === "VERIFIED" ? "text-emerald-600" : "text-amber-600"
+                  resourceStatus === "VERIFIED"
+                    ? "text-emerald-600"
+                    : "text-amber-600"
                 }`}
               >
                 {resourceStatus}
@@ -149,15 +176,26 @@ export function OptimizedBlockDetailDrawer({
             <span className="text-xs font-bold text-foreground block">
               Scheduled Corridor Window Interval
             </span>
+
             <div className="flex items-center justify-between text-xs font-mono bg-muted/40 p-2.5 rounded border border-border">
               <div>
-                <span className="text-[10px] text-muted-foreground block uppercase">Possession Start</span>
-                <span className="font-bold text-foreground">{formatDateTime(block.block_start)}</span>
+                <span className="text-[10px] text-muted-foreground block uppercase">
+                  Possession Start
+                </span>
+                <span className="font-bold text-foreground">
+                  {formatDateTime(block.block_start)}
+                </span>
               </div>
+
               <span className="text-muted-foreground">→</span>
+
               <div className="text-right">
-                <span className="text-[10px] text-muted-foreground block uppercase">Possession End</span>
-                <span className="font-bold text-foreground">{formatDateTime(block.block_end)}</span>
+                <span className="text-[10px] text-muted-foreground block uppercase">
+                  Possession End
+                </span>
+                <span className="font-bold text-foreground">
+                  {formatDateTime(block.block_end)}
+                </span>
               </div>
             </div>
           </div>
@@ -167,16 +205,20 @@ export function OptimizedBlockDetailDrawer({
             <span className="text-xs font-bold text-foreground block">
               Priority Value Realization
             </span>
+
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="p-2.5 rounded bg-background border border-border space-y-1">
                 <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider block">
                   Realized Priority Value
                 </span>
+
                 <div className="text-xl font-mono font-extrabold text-blue-600">
                   {formatScore(block.realized_priority_value)}
                 </div>
+
                 <p className="text-[10px] text-muted-foreground">
-                  Score achieved in the optimized global schedule for this task set.
+                  Score achieved in the optimized global schedule for this task
+                  set.
                 </p>
               </div>
 
@@ -184,11 +226,17 @@ export function OptimizedBlockDetailDrawer({
                 <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider block">
                   Candidate Baseline Value
                 </span>
+
                 <div className="text-xl font-mono font-bold text-foreground">
-                  {formatScore(block.candidate_priority_value ?? block.realized_priority_value)}
+                  {formatScore(
+                    block.candidate_priority_value ??
+                      block.realized_priority_value
+                  )}
                 </div>
+
                 <p className="text-[10px] text-muted-foreground">
-                  Unoptimized screening priority baseline from candidate generation.
+                  Unoptimized screening priority baseline from candidate
+                  generation.
                 </p>
               </div>
             </div>
@@ -199,6 +247,7 @@ export function OptimizedBlockDetailDrawer({
             <span className="text-xs font-bold text-foreground block">
               Departments Involved ({depts.length})
             </span>
+
             <div className="flex flex-wrap gap-2">
               {depts.map((d) => (
                 <div
@@ -224,6 +273,7 @@ export function OptimizedBlockDetailDrawer({
               <span className="text-xs font-bold text-foreground block">
                 Work Orders Scheduled ({block.task_ids.length})
               </span>
+
               <span className="text-[11px] text-muted-foreground">
                 Click work order to inspect in workbench
               </span>
@@ -233,15 +283,17 @@ export function OptimizedBlockDetailDrawer({
               {block.task_ids.map((taskId) => (
                 <Link
                   key={taskId}
-                  href={`/maintenance`}
+                  href="/maintenance"
                   className="p-2.5 rounded border border-border bg-background hover:bg-muted/40 transition-colors flex items-center justify-between group"
                 >
                   <div className="flex items-center gap-2">
                     <Wrench className="h-3.5 w-3.5 text-blue-600" />
+
                     <span className="font-mono text-xs font-bold text-foreground group-hover:text-primary">
                       {taskId}
                     </span>
                   </div>
+
                   <ExternalLink className="h-3.5 w-3.5 text-muted-foreground group-hover:text-primary" />
                 </Link>
               ))}
@@ -254,27 +306,128 @@ export function OptimizedBlockDetailDrawer({
               <span className="text-[10px] uppercase font-bold text-muted-foreground block">
                 Train Timetable Conflicts
               </span>
+
               <span className="text-base font-extrabold text-foreground mt-0.5 block">
                 {block.train_conflicts} Conflicts
               </span>
             </div>
+
             <div className="p-3 rounded border border-border bg-muted/20">
               <span className="text-[10px] uppercase font-bold text-muted-foreground block">
                 Freight Corridor Impact
               </span>
+
               <span className="text-base font-extrabold text-foreground mt-0.5 block">
                 {freightInfo}
               </span>
             </div>
           </div>
 
+          {/* Possession Readiness Gate */}
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold text-foreground block">
+                  Possession Readiness Gate
+                </span>
+
+                <span className="text-[10px] text-muted-foreground">
+                  Deterministic decision-support checks before human approval
+                </span>
+              </div>
+
+              {readinessQuery.data && (
+                <span
+                  className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold border ${
+                    readinessQuery.data.readiness === "GO"
+                      ? "bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
+                      : readinessQuery.data.readiness === "HOLD"
+                      ? "bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800"
+                      : "bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800"
+                  }`}
+                >
+                  {readinessQuery.data.readiness}
+                </span>
+              )}
+            </div>
+
+            {readinessQuery.isLoading ? (
+              <div className="rounded border border-border bg-muted/20 p-3 text-[11px] text-muted-foreground">
+                Assessing possession readiness...
+              </div>
+            ) : readinessQuery.isError ? (
+              <div className="rounded border border-red-200 dark:border-red-900 bg-red-50/50 dark:bg-red-950/30 p-3 text-[11px] text-red-700 dark:text-red-300">
+                Unable to assess readiness for this block. Please verify that
+                the backend is available and the current user is authorized.
+              </div>
+            ) : readinessQuery.data ? (
+              <div
+                className={`rounded border p-3.5 space-y-3 ${
+                  readinessQuery.data.readiness === "GO"
+                    ? "border-emerald-200 dark:border-emerald-900 bg-emerald-50/40 dark:bg-emerald-950/20"
+                    : readinessQuery.data.readiness === "HOLD"
+                    ? "border-amber-200 dark:border-amber-900 bg-amber-50/40 dark:bg-amber-950/20"
+                    : "border-red-200 dark:border-red-900 bg-red-50/40 dark:bg-red-950/20"
+                }`}
+              >
+                <div className="space-y-1">
+                  <span className="text-xs font-bold text-foreground block">
+                    {readinessQuery.data.summary}
+                  </span>
+
+                  <span className="text-[10px] text-muted-foreground block">
+                    AI/rule recommendation only — final possession decision
+                    remains with the authorized human authority.
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  {readinessQuery.data.checks.map((check) => (
+                    <div
+                      key={check.key}
+                      className="flex items-start gap-2 rounded bg-background/70 border border-border p-2"
+                    >
+                      {check.status === "PASS" ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 mt-0.5 shrink-0" />
+                      ) : check.status === "PENDING" ? (
+                        <Clock className="h-3.5 w-3.5 text-amber-600 mt-0.5 shrink-0" />
+                      ) : (
+                        <AlertCircle className="h-3.5 w-3.5 text-red-600 mt-0.5 shrink-0" />
+                      )}
+
+                      <div className="min-w-0">
+                        <span className="text-[10px] font-bold text-foreground block">
+                          {check.label}
+                        </span>
+
+                        <span className="text-[10px] text-muted-foreground block">
+                          {check.message}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded border border-amber-200 dark:border-amber-900 bg-amber-50/70 dark:bg-amber-950/30 px-2.5 py-2 text-[10px] text-amber-900 dark:text-amber-200 font-semibold flex items-center gap-2">
+                  <ShieldIcon />
+                  <span>Human decision required</span>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
           {/* Mandatory Decision Support Notice */}
           <div className="p-3 rounded border border-amber-200 dark:border-amber-900 bg-amber-50/50 dark:bg-amber-950/30 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2">
             <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+
             <div>
               <span className="font-bold block">Decision Support Output</span>
+
               <span className="text-[11px]">
-                This block is an algorithmic recommendation generated by Google OR-Tools CP-SAT. It represents a Candidate schedule and is NOT an officially approved railway possession until ratified by Divisional Operating Control.
+                This block is an algorithmic recommendation generated by
+                Google OR-Tools CP-SAT. It represents a Candidate schedule and
+                is NOT an officially approved railway possession until
+                ratified by Divisional Operating Control.
               </span>
             </div>
           </div>
@@ -303,11 +456,31 @@ export function OptimizedBlockDetailDrawer({
             />
           </div>
 
-          <Button variant="outline" size="sm" onClick={onClose} className="h-8 text-xs">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onClose}
+            className="h-8 text-xs"
+          >
             Close
           </Button>
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Small local icon wrapper so the readiness notice does not depend
+ * on an additional icon import solely for this one label.
+ */
+function ShieldIcon() {
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-amber-400/60 text-[9px] font-bold"
+    >
+      H
+    </span>
   );
 }

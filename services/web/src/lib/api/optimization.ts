@@ -79,3 +79,25 @@ export function getOptimizationRunAuditTrail(
     `/api/v1/audit/optimization-runs/${encodeURIComponent(String(runId))}`
   );
 }
+export interface ReadinessCheck {
+  key: string;
+  label: string;
+  status: "PASS" | "PENDING" | "FAIL";
+  message: string;
+}
+
+export interface PossessionReadiness {
+  block_id: number;
+  readiness: "GO" | "HOLD" | "REDUCE";
+  summary: string;
+  checks: ReadinessCheck[];
+  human_decision_required: boolean;
+}
+
+export function getBlockReadiness(
+  blockId: number
+): Promise<PossessionReadiness> {
+  return apiGet<PossessionReadiness>(
+    `/api/v1/optimization/blocks/${encodeURIComponent(String(blockId))}/readiness`
+  );
+}

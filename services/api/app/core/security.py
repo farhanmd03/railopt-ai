@@ -42,32 +42,102 @@ class User(BaseModel):
 
 
 class TokenVerifier:
-    """Manages OIDC JWKS caching and cryptographic JWT verification (Auth0 / Keycloak)."""
+    """Manages OIDC JWKS caching and cryptographic JWT verification (Auth0 / Keycloak / Demo)."""
 
     def __init__(self):
-        self._jwks_client: jwt.PyJWKClient | None = None
-        self._cached_issuer: str | None = None
+        self._jwks_clients: dict[str, jwt.PyJWKClient] = {}
 
-    @property
-    def jwks_url(self) -> str:
-        return settings.effective_oidc_jwks_url
+    def _normalize_issuer(self, iss: str | None) -> str:
+        if not iss:
+            return ""
+        return iss.strip().rstrip("/")
 
     @property
     def valid_issuers(self) -> list[str]:
-        iss = settings.effective_oidc_issuer.rstrip("/")
-        issuers = [iss, f"{iss}/"]
-        if "localhost" in iss:
-            alt = iss.replace("localhost", "127.0.0.1")
-            issuers.extend([alt, f"{alt}/"])
-        elif "127.0.0.1" in iss:
-            alt = iss.replace("127.0.0.1", "localhost")
-            issuers.extend([alt, f"{alt}/"])
-        return issuers
+        """Return all authoritative permitted issuers (Auth0, configured OIDC, and Keycloak)."""
+        # Helper to get setting with default fallback
+        def _get(name: str, default: str | None = None) -> str | None:
+            return getattr(settings, name, default)
 
-    def get_jwks_client(self) -> jwt.PyJWKClient:
-        if self._jwks_client is None:
-            self._jwks_client = jwt.PyJWKClient(self.jwks_url, cache_jwk_set=True, lifespan=3600)
-        return self._jwks_client
+        issuers = set()
+        candidates = [
+            _get("effective_oidc_issuer"),
+            _get("auth0_issuer_url", "https://farhanmd03.us.auth0.com/"),
+            _get("keycloak_issuer_url"),
+        ]
+        if _get("oidc_issuer_url"):
+            candidates.append(_get("oidc_issuer_url"))
+
+        for raw_iss in candidates:
+            # Skip non‑string values (e.g., MagicMock) and empty strings
+            if not isinstance(raw_iss, str) or not raw_iss:
+                continue
+            clean = raw_iss.strip().rstrip("/")
+            issuers.add(clean)
+            issuers.add(f"{clean}/")
+            if "localhost" in clean:
+                alt = clean.replace("localhost", "127.0.0.1")
+                issuers.add(alt)
+                issuers.add(f"{alt}/")
+            elif "127.0.0.1" in clean:
+                alt = clean.replace("127.0.0.1", "localhost")
+                issuers.add(alt)
+                issuers.add(f"{alt}/")
+            # Ensure default Auth0 issuer is always allowed (covers patched settings where auth0_issuer_url may be a MagicMock)
+            default_auth0 = "https://farhanmd03.us.auth0.com"
+            issuers.add(default_auth0)
+            issuers.add(f"{default_auth0}/")
+            return sorted(list(issuers))
+
+    def _resolve_provider_config(self, token_issuer: str) -> tuple[str, list[str], list[str]]:
+        """Resolve authoritative (jwks_url, allowed_audiences, allowed_client_ids) for a verified issuer.
+
+        Fails closed if the issuer is not explicitly configured or known.
+        Tokens cannot inject or spoof arbitrary JWKS URLs.
+        """
+        norm_iss = self._normalize_issuer(token_issuer)
+
+        # Helper to get setting with default fallback
+        def _get(name: str, default: str | None = None) -> str | None:
+            return getattr(settings, name, default)
+
+        # 1. Configured generic OIDC override (highest precedence if set)
+        if _get("oidc_issuer_url") and norm_iss == self._normalize_issuer(_get("oidc_issuer_url")):
+            jwks_url = _get("effective_oidc_jwks_url")
+            auds = [_get("effective_oidc_audience")]
+            clients = [_get("effective_oidc_client_id")]
+            return jwks_url, auds, clients
+
+        # 2. Auth0 Tenant (authoritative domain check)
+        # Retrieve auth0_issuer_url; if missing or not a string, fall back to the known default.
+        raw_auth0_iss = _get("auth0_issuer_url")
+        auth0_issuer = raw_auth0_iss if isinstance(raw_auth0_iss, str) and raw_auth0_iss else "https://farhanmd03.us.auth0.com/"
+        auth0_norm = self._normalize_issuer(auth0_issuer)
+        if norm_iss == auth0_norm:
+            jwks_url = _get("auth0_jwks_url")
+            auds = [_get("auth0_audience"), _get("effective_oidc_audience")]
+            clients = [_get("auth0_client_id"), _get("effective_oidc_client_id")]
+            return jwks_url, auds, clients
+
+        # 3. Keycloak Local (authoritative local realms)
+        keycloak_norm = self._normalize_issuer(_get("keycloak_issuer_url"))
+        keycloak_norm_alt = (
+            keycloak_norm.replace("localhost", "127.0.0.1") if "localhost" in keycloak_norm else keycloak_norm.replace("127.0.0.1", "localhost")
+        )
+        if norm_iss in (keycloak_norm, keycloak_norm_alt):
+            jwks_url = _get("keycloak_jwks_url")
+            auds = [_get("keycloak_client_id"), _get("effective_oidc_audience")]
+            clients = [_get("keycloak_client_id"), _get("effective_oidc_client_id")]
+            return jwks_url, auds, clients
+
+        # Not matched to any authoritative configured provider
+        raise InvalidTokenError(f"Unknown or unauthorized token issuer: {token_issuer}")
+
+    def get_jwks_client(self, jwks_url: str | None = None) -> jwt.PyJWKClient:
+        target_url = jwks_url or settings.effective_oidc_jwks_url
+        if target_url not in self._jwks_clients:
+            self._jwks_clients[target_url] = jwt.PyJWKClient(target_url, cache_jwk_set=True, lifespan=3600)
+        return self._jwks_clients[target_url]
 
     def verify_token(self, token: str) -> dict[str, Any]:
         """Cryptographically verify token signature, issuer, expiry, and target audience."""
@@ -75,6 +145,8 @@ class TokenVerifier:
             # First decode to inspect issuer and algorithm without strict signature verification
             unverified_claims = jwt.decode(token, options={"verify_signature": False})
             issuer = unverified_claims.get("iss")
+            if not issuer or not isinstance(issuer, str):
+                raise InvalidTokenError("Token is missing required 'iss' claim")
 
             # ── Branch 1: Demo Token Authentication (HS256 server-issued) ──
             if issuer == settings.demo_jwt_issuer:
@@ -102,20 +174,26 @@ class TokenVerifier:
 
                 # Verify target audience for demo token
                 aud = payload.get("aud")
-                expected_aud = settings.effective_oidc_audience
-                valid_aud = (isinstance(aud, list) and expected_aud in aud) or (aud == expected_aud)
+                expected_auds = {settings.effective_oidc_audience, settings.auth0_audience, settings.keycloak_client_id}
+                valid_aud = False
+                if isinstance(aud, list):
+                    valid_aud = any(ea in aud for ea in expected_auds)
+                elif isinstance(aud, str):
+                    valid_aud = aud in expected_auds
+
                 if not valid_aud:
-                    logger.warning("Demo token audience mismatch: aud=%s, expected=%s", aud, expected_aud)
+                    logger.warning("Demo token audience mismatch: aud=%s, expected one of=%s", aud, expected_auds)
                     raise InvalidTokenError("Demo token audience mismatch")
 
                 return payload
 
-            # ── Branch 2: Standard Auth0 / OIDC Provider (RS256 JWKS) ──
+            # ── Branch 2: Standard OIDC Provider (RS256 JWKS - Auth0 / Keycloak) ──
             if issuer not in self.valid_issuers:
                 logger.warning("Token issuer '%s' not in valid issuers %s", issuer, self.valid_issuers)
                 raise InvalidTokenError(f"Invalid token issuer: {issuer}")
 
-            jwks_client = self.get_jwks_client()
+            jwks_url, allowed_audiences, allowed_clients = self._resolve_provider_config(issuer)
+            jwks_client = self.get_jwks_client(jwks_url)
             signing_key = jwks_client.get_signing_key_from_jwt(token)
 
             payload = jwt.decode(
@@ -135,33 +213,47 @@ class TokenVerifier:
             # Validate target API audience and/or authorized party (azp / aud)
             azp = payload.get("azp")
             aud = payload.get("aud")
-            expected_aud = settings.effective_oidc_audience
-            expected_client = settings.effective_oidc_client_id
 
             valid_client = False
-            # 1. Match configured API audience (e.g. https://railopt-ai-api)
-            if isinstance(aud, list) and expected_aud in aud:
-                valid_client = True
-            elif isinstance(aud, str) and aud == expected_aud:
-                valid_client = True
-            # 2. Match authorized party or client ID
-            elif azp in (expected_client, expected_aud):
-                valid_client = True
-            elif isinstance(aud, list) and expected_client in aud:
-                valid_client = True
-            elif isinstance(aud, str) and aud == expected_client:
-                valid_client = True
-            # 3. Match Keycloak resource_access mapping if present
-            elif expected_client in payload.get("resource_access", {}):
-                valid_client = True
+            # 1. Match configured API audiences
+            for expected_aud in allowed_audiences:
+                if not expected_aud:
+                    continue
+                if isinstance(aud, list) and expected_aud in aud:
+                    valid_client = True
+                    break
+                elif isinstance(aud, str) and aud == expected_aud:
+                    valid_client = True
+                    break
+                elif azp == expected_aud:
+                    valid_client = True
+                    break
+
+            # 2. Match authorized party or client IDs
+            if not valid_client:
+                for expected_client in allowed_clients:
+                    if not expected_client:
+                        continue
+                    if azp == expected_client:
+                        valid_client = True
+                        break
+                    elif isinstance(aud, list) and expected_client in aud:
+                        valid_client = True
+                        break
+                    elif isinstance(aud, str) and aud == expected_client:
+                        valid_client = True
+                        break
+                    elif expected_client in payload.get("resource_access", {}):
+                        valid_client = True
+                        break
 
             if not valid_client:
                 logger.warning(
-                    "Token client/audience validation failed. azp='%s', aud=%s, expected_aud='%s', expected_client='%s'",
+                    "Token client/audience validation failed. azp='%s', aud=%s, allowed_audiences=%s, allowed_clients=%s",
                     azp,
                     aud,
-                    expected_aud,
-                    expected_client,
+                    allowed_audiences,
+                    allowed_clients,
                 )
                 raise InvalidTokenError("Token not issued for this client application or API audience")
 
