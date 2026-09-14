@@ -1,6 +1,8 @@
 import { apiGet, apiPost } from "../api-client";
 import { PaginatedResponse } from "../types/api";
 import {
+  NegotiationLog,
+  NegotiationRequest,
   OptimizationRun,
   OptimizationRunCreateRequest,
   OptimizationRunDetail,
@@ -99,5 +101,23 @@ export function getBlockReadiness(
 ): Promise<PossessionReadiness> {
   return apiGet<PossessionReadiness>(
     `/api/v1/optimization/blocks/${encodeURIComponent(String(blockId))}/readiness`
+  );
+}
+
+export function negotiateBlock(
+  blockId: number,
+  request: NegotiationRequest
+): Promise<NegotiationLog> {
+  return apiPost<NegotiationLog>(
+    `/api/v1/optimization/blocks/${encodeURIComponent(String(blockId))}/negotiate`,
+    request
+  );
+}
+
+export function getBlockNegotiations(
+  blockId: number
+): Promise<NegotiationLog[]> {
+  return apiGet<NegotiationLog[]>(
+    `/api/v1/optimization/blocks/${encodeURIComponent(String(blockId))}/negotiations`
   );
 }

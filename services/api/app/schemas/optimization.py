@@ -10,7 +10,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from app.models.negotiation import NegotiationAction, AdjustmentCategory
 
 
 class OptimizationRunCreateRequest(BaseModel):
@@ -119,6 +120,63 @@ class OptimizedBlockResponse(BaseModel):
     )
     explanation: dict[str, Any] | None = Field(None, description="Structured rationale and constraint data")
     created_at: datetime | None = Field(None, description="Creation timestamp")
+
+
+class NegotiationRequest(BaseModel):
+    """Payload for a department to negotiate a block recommendation."""
+
+    department: str = Field(..., description="Department name (e.g., ENGINEERING, SNT, TRD)")
+    action: NegotiationAction = Field(..., description="One of 'ACCEPT', 'ADJUST', 'REJECT'")
+    comment: str | None = Field(None, description="Optional comment or reason for the action")
+    adjustment_category: AdjustmentCategory | None = Field(
+        None, description="Category for adjustment if action is ADJUST"
+    )
+    adjustment_payload: dict[str, Any] | None = Field(
+        None, description="Adjustment details payload with value and reason"
+    )
+
+    @field_validator("department", mode="after")
+    @classmethod
+    def validate_department(cls, v: str) -> str:
+        dept = v.strip().upper()
+        if dept in ("ENGINEERING", "ENGG"):
+            return "ENGINEERING"
+        if dept in ("SNT", "S&T", "S_AND_T", "SIGNAL"):
+            return "SNT"
+        if dept in ("TRD", "TRACTION"):
+            return "TRD"
+        return dept
+
+    @model_validator(mode="after")
+    def validate_adjust_payload(self) -> NegotiationRequest:
+        if self.action == NegotiationAction.ADJUST:
+            if not self.adjustment_category:
+                raise ValueError("adjustment_category must be provided for ADJUST action")
+            if not isinstance(self.adjustment_payload, dict):
+                raise ValueError("adjustment_payload must be a dict for ADJUST action")
+            if set(self.adjustment_payload.keys()) != {"value", "reason"}:
+                raise ValueError('adjustment_payload must contain exactly keys "value" and "reason"')
+            if not isinstance(self.adjustment_payload.get("value"), str) or not isinstance(self.adjustment_payload.get("reason"), str):
+                raise ValueError("adjustment_payload fields must be strings")
+            if not self.adjustment_payload.get("value", "").strip() or not self.adjustment_payload.get("reason", "").strip():
+                raise ValueError("adjustment_payload value and reason cannot be empty")
+        return self
+
+
+class NegotiationResponse(BaseModel):
+    """Response after a negotiation action is recorded."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int = Field(..., description="Database ID of the negotiation record")
+    optimized_block_id: int = Field(..., description="ID of the block being negotiated")
+    department: str = Field(..., description="Department that performed the action")
+    action: NegotiationAction = Field(..., description="Action taken: ACCEPT, ADJUST, REJECT")
+    comment: str | None = Field(None, description="Optional comment")
+    adjustment_category: AdjustmentCategory | None = Field(None, description="Adjustment category if applicable")
+    adjustment_payload: dict[str, Any] | None = Field(None, description="Adjustment details payload")
+    performed_by: str = Field(..., description="Username of the user who performed the action")
+    timestamp: datetime = Field(..., description="When the action was recorded")
 
 
 class OptimizationRunResponse(BaseModel):

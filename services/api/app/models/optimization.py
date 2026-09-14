@@ -120,6 +120,10 @@ class OptimizedBlock(TimestampMixin, Base):
     tasks: Mapped[list["OptimizedBlockTask"]] = relationship(
         back_populates="optimized_block"
     )
+    # Negotiation records for this block
+    negotiations: Mapped[list["NegotiationLog"]] = relationship(
+        back_populates="optimized_block", cascade="all, delete-orphan"
+    )
 
 
 class OptimizedBlockTask(TimestampMixin, Base):

@@ -35,8 +35,11 @@ from app.models.optimization import (
     OptimizedBlock,
     OptimizedBlockTask,
 )
+from app.models.negotiation import NegotiationLog, NegotiationAction, AdjustmentCategory
 from app.schemas.audit import AuditLogListResponse, AuditLogResponse
 from app.schemas.optimization import (
+    NegotiationRequest,
+    NegotiationResponse,
     OptimizationRejectRequest,
     OptimizationRunCreateRequest,
     OptimizationRunDetailResponse,
@@ -69,6 +72,8 @@ OPTIMIZATION_READ_ROLES = (
     "SNT",
     "TRD",
 )
+
+NEGOTIATOR_ROLES = ("ENGINEERING", "SNT", "TRD")
 
 
 def _format_block_response(block: OptimizedBlock) -> OptimizedBlockResponse:
@@ -952,3 +957,133 @@ async def get_block_readiness(
         checks=checks,
         human_decision_required=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# Multi-Department Negotiation Endpoints (Badge 2)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/blocks/{block_id}/negotiate",
+    response_model=NegotiationResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Submit a department negotiation action for an optimized block",
+)
+async def negotiate_block(
+    block_id: int,
+    payload: NegotiationRequest,
+    current_user: User = Depends(require_roles(*NEGOTIATOR_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> NegotiationResponse:
+    """Record an ACCEPT, ADJUST, or REJECT action from a department for a block recommendation.
+
+    - Requires ENGINEERING, SNT, or TRD role.
+    - Validates department matches user role unless user is admin.
+    - Rejects with HTTP 409 if block is already finalized (APPROVED/REJECTED).
+    - Writes both a NegotiationLog entry and an immutable AuditLog entry.
+    """
+    block = await db.get(OptimizedBlock, block_id)
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Optimized block with ID '{block_id}' was not found.",
+        )
+
+    # Check if block is finalized
+    block_status = (block.status or "").upper()
+    if block_status in ("APPROVED", "REJECTED"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Block already finalized; negotiation not allowed.",
+        )
+
+    # Validate department match against user roles
+    dept_normalized = payload.department.upper()
+    if not current_user.has_any_role(dept_normalized, "ADMIN"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User '{current_user.username}' is not authorized to submit negotiations for department '{payload.department}'.",
+        )
+
+    now = datetime.now(timezone.utc)
+    log_entry = NegotiationLog(
+        optimized_block_id=block.id,
+        department=payload.department,
+        action=payload.action,
+        comment=payload.comment,
+        adjustment_category=payload.adjustment_category,
+        adjustment_payload=payload.adjustment_payload,
+        performed_by=current_user.username or current_user.id or "unknown",
+        timestamp=now,
+    )
+    db.add(log_entry)
+    await db.flush()
+
+    audit_action = f"NEGOTIATION_{payload.action.value}"
+    audit_entry = AuditLog(
+        timestamp=now,
+        user_id=current_user.username or current_user.id or "unknown",
+        action=audit_action,
+        entity_type="NegotiationLog",
+        entity_id=str(log_entry.id),
+        before_value=None,
+        after_value=json.dumps(
+            {
+                "optimized_block_id": block.id,
+                "department": payload.department,
+                "action": payload.action.value,
+                "comment": payload.comment,
+                "adjustment_category": (
+                    payload.adjustment_category.value
+                    if payload.adjustment_category
+                    else None
+                ),
+                "adjustment_payload": payload.adjustment_payload,
+            }
+        ),
+        details=payload.comment or f"Negotiation {payload.action.value} submitted by {payload.department}",
+    )
+    db.add(audit_entry)
+
+    await db.commit()
+    await db.refresh(log_entry)
+
+    logger.info(
+        "Negotiation action %s recorded for block %s by user %s (%s)",
+        payload.action.value,
+        block.id,
+        current_user.username,
+        payload.department,
+    )
+
+    return NegotiationResponse.model_validate(log_entry)
+
+
+@router.get(
+    "/blocks/{block_id}/negotiations",
+    response_model=list[NegotiationResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Retrieve negotiation history for an optimized block",
+)
+async def get_block_negotiations(
+    block_id: int,
+    current_user: User = Depends(require_roles(*OPTIMIZATION_READ_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> list[NegotiationResponse]:
+    """Retrieve chronological negotiation entries for a given block."""
+    block = await db.get(OptimizedBlock, block_id)
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Optimized block with ID '{block_id}' was not found.",
+        )
+
+    stmt = (
+        select(NegotiationLog)
+        .where(NegotiationLog.optimized_block_id == block.id)
+        .order_by(NegotiationLog.timestamp.asc(), NegotiationLog.id.asc())
+    )
+    logs = (await db.scalars(stmt)).all()
+
+    return [NegotiationResponse.model_validate(log) for log in logs]

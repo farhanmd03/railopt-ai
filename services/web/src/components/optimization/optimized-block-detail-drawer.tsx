@@ -1,20 +1,34 @@
 "use client";
 
-import React, { useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { OptimizedBlock } from "@/lib/types/optimization";
+import { useAuth } from "react-oidc-context";
+import { buildAuthUser } from "@/lib/auth-config";
+import {
+  AdjustmentCategory,
+  NegotiationAction,
+  NegotiationRequest,
+  OptimizedBlock,
+} from "@/lib/types/optimization";
 import * as optimizationApi from "@/lib/api/optimization";
 import { formatDateTime, formatDuration, formatScore } from "@/lib/utils";
 import {
   AlertCircle,
+  AlertTriangle,
   Calendar,
+  Check,
   CheckCircle2,
   Clock,
   ExternalLink,
+  History,
   Layers,
   MapPin,
+  MessageSquare,
+  Send,
+  SlidersHorizontal,
   Sparkles,
+  ThumbsDown,
+  ThumbsUp,
   Train,
   Wrench,
   X,
@@ -33,6 +47,90 @@ export function OptimizedBlockDetailDrawer({
   isOpen,
   onClose,
 }: OptimizedBlockDetailDrawerProps) {
+  const auth = useAuth();
+  const user = useMemo(() => buildAuthUser(auth.user), [auth.user]);
+
+  const isNegotiator = useMemo(() => {
+    if (!user) return false;
+    return user.roles.some((r) =>
+      ["ENGINEERING", "SNT", "TRD", "ADMIN"].includes(r)
+    );
+  }, [user]);
+
+  const defaultDept = useMemo(() => {
+    if (!user) return "ENGINEERING";
+    if (user.roles.includes("ENGINEERING")) return "ENGINEERING";
+    if (user.roles.includes("SNT")) return "SNT";
+    if (user.roles.includes("TRD")) return "TRD";
+    return "ENGINEERING";
+  }, [user]);
+
+  const [selectedDept, setSelectedDept] = useState<string>("ENGINEERING");
+  const [action, setAction] = useState<NegotiationAction>("ACCEPT");
+  const [adjustmentCategory, setAdjustmentCategory] =
+    useState<AdjustmentCategory>("TIME_CHANGE");
+  const [adjustmentValue, setAdjustmentValue] = useState<string>("");
+  const [adjustmentReason, setAdjustmentReason] = useState<string>("");
+  const [comment, setComment] = useState<string>("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [feedbackMessage, setFeedbackMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+
+  const [negotiations, setNegotiations] = useState<optimizationApi.NegotiationLog[]>([]);
+  const [isLoadingNegotiations, setIsLoadingNegotiations] = useState(false);
+
+  const [readiness, setReadiness] = useState<optimizationApi.PossessionReadiness | null>(null);
+  const [isLoadingReadiness, setIsLoadingReadiness] = useState(false);
+  const [readinessError, setReadinessError] = useState(false);
+
+  const fetchNegotiations = React.useCallback(async () => {
+    if (!block) return;
+    try {
+      setIsLoadingNegotiations(true);
+      const data = await optimizationApi.getBlockNegotiations(block.id);
+      setNegotiations(data || []);
+    } catch {
+      // Gracefully handle query error
+    } finally {
+      setIsLoadingNegotiations(false);
+    }
+  }, [block?.id]);
+
+  useEffect(() => {
+    if (isOpen && block) {
+      fetchNegotiations();
+    }
+  }, [isOpen, block?.id, fetchNegotiations]);
+
+  useEffect(() => {
+    if (!isOpen || !block) return;
+    let isMounted = true;
+    setIsLoadingReadiness(true);
+    setReadinessError(false);
+    optimizationApi
+      .getBlockReadiness(block.id)
+      .then((res) => {
+        if (isMounted) setReadiness(res);
+      })
+      .catch(() => {
+        if (isMounted) setReadinessError(true);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingReadiness(false);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, block?.id]);
+
+  useEffect(() => {
+    if (defaultDept) {
+      setSelectedDept(defaultDept);
+    }
+  }, [defaultDept]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape" && isOpen) {
@@ -47,17 +145,59 @@ export function OptimizedBlockDetailDrawer({
     };
   }, [isOpen, onClose]);
 
-  const readinessQuery = useQuery({
-    queryKey: ["block-readiness", block?.id],
-    queryFn: () => {
-      if (!block) {
-        throw new Error("No optimization block selected.");
-      }
+  const handleSubmitNegotiation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFeedbackMessage(null);
+    if (!block) return;
 
-      return optimizationApi.getBlockReadiness(block.id);
-    },
-    enabled: isOpen && !!block,
-  });
+    if (action === "ADJUST") {
+      if (!adjustmentValue.trim() || !adjustmentReason.trim()) {
+        setFeedbackMessage({
+          type: "error",
+          text: "Please provide both adjustment value and reason.",
+        });
+        return;
+      }
+    }
+
+    const payload: NegotiationRequest = {
+      department: selectedDept,
+      action: action,
+      comment: comment.trim() || null,
+      adjustment_category: action === "ADJUST" ? adjustmentCategory : null,
+      adjustment_payload:
+        action === "ADJUST"
+          ? {
+              value: adjustmentValue.trim(),
+              reason: adjustmentReason.trim(),
+            }
+          : null,
+    };
+
+    try {
+      setIsSubmitting(true);
+      await optimizationApi.negotiateBlock(block.id, payload);
+      setFeedbackMessage({
+        type: "success",
+        text: "Department negotiation action recorded successfully.",
+      });
+      setComment("");
+      setAdjustmentValue("");
+      setAdjustmentReason("");
+      await fetchNegotiations();
+    } catch (err: any) {
+      const detail =
+        err?.response?.data?.detail ||
+        err?.message ||
+        "Failed to submit negotiation action.";
+      setFeedbackMessage({
+        type: "error",
+        text: detail,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   if (!isOpen || !block) return null;
 
@@ -336,43 +476,43 @@ export function OptimizedBlockDetailDrawer({
                 </span>
               </div>
 
-              {readinessQuery.data && (
+              {readiness && (
                 <span
                   className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold border ${
-                    readinessQuery.data.readiness === "GO"
+                    readiness.readiness === "GO"
                       ? "bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
-                      : readinessQuery.data.readiness === "HOLD"
+                      : readiness.readiness === "HOLD"
                       ? "bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800"
                       : "bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800"
                   }`}
                 >
-                  {readinessQuery.data.readiness}
+                  {readiness.readiness}
                 </span>
               )}
             </div>
 
-            {readinessQuery.isLoading ? (
+            {isLoadingReadiness ? (
               <div className="rounded border border-border bg-muted/20 p-3 text-[11px] text-muted-foreground">
                 Assessing possession readiness...
               </div>
-            ) : readinessQuery.isError ? (
+            ) : readinessError ? (
               <div className="rounded border border-red-200 dark:border-red-900 bg-red-50/50 dark:bg-red-950/30 p-3 text-[11px] text-red-700 dark:text-red-300">
                 Unable to assess readiness for this block. Please verify that
                 the backend is available and the current user is authorized.
               </div>
-            ) : readinessQuery.data ? (
+            ) : readiness ? (
               <div
                 className={`rounded border p-3.5 space-y-3 ${
-                  readinessQuery.data.readiness === "GO"
+                  readiness.readiness === "GO"
                     ? "border-emerald-200 dark:border-emerald-900 bg-emerald-50/40 dark:bg-emerald-950/20"
-                    : readinessQuery.data.readiness === "HOLD"
+                    : readiness.readiness === "HOLD"
                     ? "border-amber-200 dark:border-amber-900 bg-amber-50/40 dark:bg-amber-950/20"
                     : "border-red-200 dark:border-red-900 bg-red-50/40 dark:bg-red-950/20"
                 }`}
               >
                 <div className="space-y-1">
                   <span className="text-xs font-bold text-foreground block">
-                    {readinessQuery.data.summary}
+                    {readiness.summary}
                   </span>
 
                   <span className="text-[10px] text-muted-foreground block">
@@ -382,7 +522,7 @@ export function OptimizedBlockDetailDrawer({
                 </div>
 
                 <div className="space-y-1.5">
-                  {readinessQuery.data.checks.map((check) => (
+                  {readiness.checks.map((check) => (
                     <div
                       key={check.key}
                       className="flex items-start gap-2 rounded bg-background/70 border border-border p-2"
@@ -414,6 +554,306 @@ export function OptimizedBlockDetailDrawer({
                 </div>
               </div>
             ) : null}
+          </div>
+
+          {/* Multi-Department Negotiation (Badge 2) */}
+          <div className="space-y-3 rounded-lg border border-border bg-card p-3.5 sm:p-4 shadow-2xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="h-4 w-4 text-blue-600" />
+                <span className="text-xs font-bold text-foreground">
+                  Multi-Department Negotiation
+                </span>
+              </div>
+
+              <span className="text-[10px] uppercase font-semibold text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                Human-in-the-loop
+              </span>
+            </div>
+
+            <p className="text-[11px] text-muted-foreground">
+              Participating departments (Engineering, S&T, TRD) review recommended possession parameters, register approvals, or propose structured adjustments.
+            </p>
+
+            {/* Finalized Block Notice */}
+            {((block.status || "").toUpperCase() === "APPROVED" ||
+              (block.status || "").toUpperCase() === "REJECTED") ? (
+              <div className="rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 p-3 text-xs text-muted-foreground flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 text-slate-500 shrink-0" />
+                <span>
+                  This block is finalized ({block.status}). Further negotiation actions are closed.
+                </span>
+              </div>
+            ) : isNegotiator ? (
+              /* Negotiation Action Form */
+              <form
+                onSubmit={handleSubmitNegotiation}
+                className="rounded border border-border bg-muted/20 p-3 space-y-3 text-xs"
+              >
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="font-semibold text-foreground text-xs">
+                    Submit Negotiation Action
+                  </span>
+
+                  {user?.roles.includes("ADMIN") ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-muted-foreground">Department:</span>
+                      <select
+                        value={selectedDept}
+                        onChange={(e) => setSelectedDept(e.target.value)}
+                        className="rounded border border-border bg-background px-2 py-1 text-xs font-semibold text-foreground"
+                      >
+                        <option value="ENGINEERING">Engineering</option>
+                        <option value="SNT">S&T</option>
+                        <option value="TRD">TRD</option>
+                      </select>
+                    </div>
+                  ) : (
+                    <span className="rounded bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-bold px-2 py-0.5 text-[11px] border border-blue-200 dark:border-blue-800">
+                      {selectedDept}
+                    </span>
+                  )}
+                </div>
+
+                {/* Action Selector */}
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAction("ACCEPT")}
+                    className={`flex items-center justify-center gap-1.5 py-2 px-2.5 rounded font-semibold text-xs border transition-all ${
+                      action === "ACCEPT"
+                        ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                        : "bg-background text-foreground border-border hover:bg-muted"
+                    }`}
+                  >
+                    <ThumbsUp className="h-3.5 w-3.5" />
+                    <span>Accept</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAction("ADJUST")}
+                    className={`flex items-center justify-center gap-1.5 py-2 px-2.5 rounded font-semibold text-xs border transition-all ${
+                      action === "ADJUST"
+                        ? "bg-amber-600 text-white border-amber-600 shadow-xs"
+                        : "bg-background text-foreground border-border hover:bg-muted"
+                    }`}
+                  >
+                    <SlidersHorizontal className="h-3.5 w-3.5" />
+                    <span>Adjust</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAction("REJECT")}
+                    className={`flex items-center justify-center gap-1.5 py-2 px-2.5 rounded font-semibold text-xs border transition-all ${
+                      action === "REJECT"
+                        ? "bg-red-600 text-white border-red-600 shadow-xs"
+                        : "bg-background text-foreground border-border hover:bg-muted"
+                    }`}
+                  >
+                    <ThumbsDown className="h-3.5 w-3.5" />
+                    <span>Reject</span>
+                  </button>
+                </div>
+
+                {/* Structured Adjustment Details (Only when ADJUST is selected) */}
+                {action === "ADJUST" && (
+                  <div className="rounded border border-amber-200 dark:border-amber-900/60 bg-amber-50/50 dark:bg-amber-950/20 p-3 space-y-2.5 animate-in fade-in">
+                    <div className="flex items-center gap-1.5 text-amber-800 dark:text-amber-300 font-semibold text-xs">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      <span>Structured Parameter Adjustment</span>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                        Adjustment Category
+                      </label>
+                      <select
+                        value={adjustmentCategory}
+                        onChange={(e) =>
+                          setAdjustmentCategory(e.target.value as AdjustmentCategory)
+                        }
+                        className="w-full rounded border border-border bg-background p-1.5 text-xs text-foreground"
+                      >
+                        <option value="TIME_CHANGE">Time Window Change</option>
+                        <option value="DURATION_CHANGE">Duration Modification</option>
+                        <option value="RESOURCE_CONCERN">Depot / Machinery Resource</option>
+                        <option value="TRAIN_CONFLICT">Train Schedule Conflict</option>
+                        <option value="READINESS_CONCERN">Readiness / Pre-condition Concern</option>
+                        <option value="OTHER">Other Operational Constraint</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                        Proposed Value / Adjustment Target <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={adjustmentValue}
+                        onChange={(e) => setAdjustmentValue(e.target.value)}
+                        placeholder="e.g., Shift start window to 03:00 UTC or +60 min"
+                        className="w-full rounded border border-border bg-background p-1.5 text-xs text-foreground placeholder:text-muted-foreground"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                        Operational Rationale <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={adjustmentReason}
+                        onChange={(e) => setAdjustmentReason(e.target.value)}
+                        placeholder="e.g., OHE power isolation block required on adjacent siding"
+                        className="w-full rounded border border-border bg-background p-1.5 text-xs text-foreground placeholder:text-muted-foreground"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Comment Field */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                    Notes / Remarks {action !== "ADJUST" ? "(Optional)" : ""}
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={comment}
+                    onChange={(e) => setComment(e.target.value)}
+                    placeholder="Enter departmental remarks or justification..."
+                    className="w-full rounded border border-border bg-background p-2 text-xs text-foreground placeholder:text-muted-foreground resize-none"
+                  />
+                </div>
+
+                {/* Feedback Notification */}
+                {feedbackMessage && (
+                  <div
+                    className={`p-2.5 rounded text-xs flex items-center gap-2 ${
+                      feedbackMessage.type === "success"
+                        ? "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                        : "bg-red-50 dark:bg-red-950/50 text-red-800 dark:text-red-300 border border-red-200 dark:border-red-800"
+                    }`}
+                  >
+                    {feedbackMessage.type === "success" ? (
+                      <Check className="h-3.5 w-3.5 shrink-0" />
+                    ) : (
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                    )}
+                    <span>{feedbackMessage.text}</span>
+                  </div>
+                )}
+
+                <Button
+                  type="submit"
+                  disabled={isSubmitting}
+                  size="sm"
+                  className="w-full h-8 text-xs font-semibold flex items-center justify-center gap-1.5"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  <span>
+                    {isSubmitting
+                      ? "Recording..."
+                      : `Submit ${action} Action`}
+                  </span>
+                </Button>
+              </form>
+            ) : (
+              <div className="rounded border border-border bg-muted/30 p-2.5 text-xs text-muted-foreground flex items-center gap-2">
+                <AlertCircle className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <span>
+                  Negotiation actions require an Engineering, S&T, or TRD departmental role.
+                </span>
+              </div>
+            )}
+
+            {/* Negotiation History Log */}
+            <div className="space-y-2 pt-1 border-t border-border">
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1.5 font-bold text-foreground">
+                  <History className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span>Negotiation History</span>
+                </div>
+
+                <span className="text-[10px] text-muted-foreground font-mono">
+                  {negotiations.length} {negotiations.length === 1 ? "entry" : "entries"}
+                </span>
+              </div>
+
+              {isLoadingNegotiations ? (
+                <div className="p-3 text-[11px] text-muted-foreground text-center">
+                  Loading negotiation records...
+                </div>
+              ) : negotiations.length > 0 ? (
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  {negotiations.map((log) => (
+                    <div
+                      key={log.id}
+                      className="rounded border border-border bg-background p-2.5 space-y-1.5 text-xs shadow-2xs"
+                    >
+                      <div className="flex items-center justify-between gap-1 flex-wrap">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold border ${
+                              log.action === "ACCEPT"
+                                ? "bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
+                                : log.action === "ADJUST"
+                                ? "bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800"
+                                : "bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800"
+                            }`}
+                          >
+                            {log.action}
+                          </span>
+
+                          <span className="font-bold text-foreground text-[11px]">
+                            {log.department}
+                          </span>
+                        </div>
+
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          {formatDateTime(log.timestamp)}
+                        </span>
+                      </div>
+
+                      {log.adjustment_payload && (
+                        <div className="rounded bg-muted/40 p-2 border border-border text-[11px] space-y-0.5 font-mono">
+                          {log.adjustment_category && (
+                            <div className="text-[10px] text-muted-foreground uppercase font-bold">
+                              Category: {log.adjustment_category}
+                            </div>
+                          )}
+                          <div>
+                            <span className="text-muted-foreground font-semibold">Value: </span>
+                            <span className="text-foreground">{log.adjustment_payload.value}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground font-semibold">Reason: </span>
+                            <span className="text-foreground">{log.adjustment_payload.reason}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {log.comment && (
+                        <p className="text-[11px] text-muted-foreground italic pl-1 border-l-2 border-border">
+                          &ldquo;{log.comment}&rdquo;
+                        </p>
+                      )}
+
+                      <div className="text-[10px] text-muted-foreground text-right">
+                        by <span className="font-semibold text-foreground">{log.performed_by}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded border border-dashed border-border p-3 text-center text-[11px] text-muted-foreground">
+                  No department negotiations recorded yet.
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Mandatory Decision Support Notice */}

@@ -73,3 +73,38 @@ export interface OptimizationRun {
 export interface OptimizationRunDetail extends OptimizationRun {
   scheduled_blocks: OptimizedBlock[];
 }
+
+export type NegotiationAction = "ACCEPT" | "ADJUST" | "REJECT";
+
+export type AdjustmentCategory =
+  | "TIME_CHANGE"
+  | "DURATION_CHANGE"
+  | "RESOURCE_CONCERN"
+  | "TRAIN_CONFLICT"
+  | "READINESS_CONCERN"
+  | "OTHER";
+
+export interface AdjustmentPayload {
+  value: string;
+  reason: string;
+}
+
+export interface NegotiationRequest {
+  department: string;
+  action: NegotiationAction;
+  comment?: string | null;
+  adjustment_category?: AdjustmentCategory | null;
+  adjustment_payload?: AdjustmentPayload | null;
+}
+
+export interface NegotiationLog {
+  id: number;
+  optimized_block_id: number;
+  department: string;
+  action: NegotiationAction;
+  comment: string | null;
+  adjustment_category: AdjustmentCategory | null;
+  adjustment_payload: AdjustmentPayload | null;
+  performed_by: string;
+  timestamp: string;
+}
