@@ -39,6 +39,7 @@ from app.routers.scenarios import router as scenarios_router
 from app.routers.sections import router as sections_router
 from app.routers.stations import router as stations_router
 from app.routers.notifications import router as notifications_router
+from app.routers.possession_outcomes import router as possession_outcomes_router
 
 
 @asynccontextmanager
@@ -110,6 +111,7 @@ api_v1_router.include_router(scenarios_router)
 api_v1_router.include_router(audit_router)
 api_v1_router.include_router(explanations_router)
 api_v1_router.include_router(notifications_router)
+api_v1_router.include_router(possession_outcomes_router)
 
 app.include_router(api_v1_router)
 
