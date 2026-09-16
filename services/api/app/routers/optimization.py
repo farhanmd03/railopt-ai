@@ -36,6 +36,7 @@ from app.models.optimization import (
     OptimizedBlockTask,
 )
 from app.models.negotiation import NegotiationLog, NegotiationAction, AdjustmentCategory
+from app.models.notification import NotificationType
 from app.schemas.audit import AuditLogListResponse, AuditLogResponse
 from app.schemas.optimization import (
     NegotiationRequest,
@@ -53,6 +54,7 @@ from app.schemas.readiness import (
     ReadinessCheck,
 )
 from app.services.optimization_service import OptimizationService
+from app.services.notification_service import create_notification
 
 logger = logging.getLogger(__name__)
 
@@ -532,8 +534,17 @@ async def submit_optimization_run(
         ),
         details="Optimization plan submitted for human operational review.",
     )
-
     db.add(audit_event)
+    
+    await create_notification(
+        db=db,
+        user_id=current_user.username,
+        notification_type=NotificationType.APPROVAL_REQUIRED,
+        title="Optimization Run Submitted",
+        message=f"Optimization run '{run_id}' has been submitted for approval.",
+        entity_type="OptimizationRun",
+        entity_id=str(run.id),
+    )
 
     await db.commit()
     await db.refresh(run)
@@ -615,8 +626,18 @@ async def approve_optimization_run(
         ),
         details="Optimization plan officially approved by operational authority.",
     )
-
     db.add(audit_event)
+
+    if run.submitted_by:
+        await create_notification(
+            db=db,
+            user_id=run.submitted_by,
+            notification_type=NotificationType.BLOCK_APPROVED,
+            title="Optimization Run Approved",
+            message=f"Optimization run '{run_id}' was approved by {current_user.username}.",
+            entity_type="OptimizationRun",
+            entity_id=str(run.id),
+        )
 
     await db.commit()
     await db.refresh(run)
@@ -699,8 +720,18 @@ async def reject_optimization_run(
         ),
         details=clean_reason,
     )
-
     db.add(audit_event)
+
+    if run.submitted_by:
+        await create_notification(
+            db=db,
+            user_id=run.submitted_by,
+            notification_type=NotificationType.BLOCK_REJECTED,
+            title="Optimization Run Rejected",
+            message=f"Optimization run '{run_id}' was rejected. Reason: {clean_reason}",
+            entity_type="OptimizationRun",
+            entity_id=str(run.id),
+        )
 
     await db.commit()
     await db.refresh(run)

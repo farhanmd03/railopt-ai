@@ -1,12 +1,13 @@
 "use client";
 
 import React, { useState } from "react";
-import { User as UserIcon, Menu, Bell, Shield, LogOut, CheckCircle2 } from "lucide-react";
+import { User as UserIcon, Menu, Shield, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "react-oidc-context";
 import { buildAuthUser, isDemoSession } from "@/lib/auth-config";
 import { LogoutDialog } from "@/components/auth/logout-dialog";
 import { RailOptLogo } from "@/components/brand/railopt-logo";
+import { NotificationCenter } from "@/components/notifications/notification-center";
 
 interface HeaderProps {
   onToggleMobileNav?: () => void;
@@ -60,9 +61,13 @@ export function Header({ onToggleMobileNav }: HeaderProps) {
           </div>
 
           <div className="hidden lg:flex items-center gap-2 text-xs font-medium text-muted-foreground">
-            <span className="text-slate-500 font-medium">Ministry of Railways</span>
+            <span className="text-slate-500 font-medium">
+              Ministry of Railways
+            </span>
             <span className="text-slate-300">•</span>
-            <span className="font-semibold text-foreground">Eastern Railway</span>
+            <span className="font-semibold text-foreground">
+              Eastern Railway
+            </span>
             <span className="text-slate-300">•</span>
             <span className="rounded bg-blue-50 dark:bg-blue-950 px-2 py-0.5 text-[10px] font-bold text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/80 tracking-wide">
               HOWRAH DIVISION
@@ -81,15 +86,8 @@ export function Header({ onToggleMobileNav }: HeaderProps) {
             <span>System Operational</span>
           </div>
 
-          <Button
-            variant="ghost"
-            size="icon"
-            className="text-muted-foreground hover:text-foreground h-8 w-8 relative rounded-md"
-            aria-label="Operational notifications"
-          >
-            <Bell className="h-4 w-4" />
-            <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-blue-600 ring-2 ring-card" />
-          </Button>
+          {/* Integrated Badge 4A Notification Center */}
+          <NotificationCenter />
 
           <div className="h-4 w-px bg-border" />
 
@@ -103,15 +101,25 @@ export function Header({ onToggleMobileNav }: HeaderProps) {
               aria-haspopup="true"
             >
               <div className="flex items-center justify-center h-7 w-7 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 text-white font-bold text-xs shadow-xs ring-1 ring-blue-700/30">
-                {authUser?.name?.charAt(0) || <UserIcon className="h-3.5 w-3.5" />}
+                {authUser?.name?.charAt(0) || (
+                  <UserIcon className="h-3.5 w-3.5" />
+                )}
               </div>
               <div className="hidden md:flex flex-col text-left">
                 <span className="font-semibold text-foreground text-xs leading-none">
                   {authUser?.name || "Authenticated User"}
                 </span>
                 <span className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                  <Shield className={`h-2.5 w-2.5 ${hasRoles ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground"}`} />
-                  <span className={hasRoles ? "font-semibold text-foreground" : "text-muted-foreground italic"}>
+                  <Shield
+                    className={`h-2.5 w-2.5 ${hasRoles ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground"}`}
+                  />
+                  <span
+                    className={
+                      hasRoles
+                        ? "font-semibold text-foreground"
+                        : "text-muted-foreground italic"
+                    }
+                  >
                     {primaryRole}
                   </span>
                 </span>
