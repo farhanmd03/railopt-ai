@@ -35,12 +35,19 @@ from app.models.optimization import (
     OptimizedBlock,
     OptimizedBlockTask,
 )
-from app.models.negotiation import NegotiationLog, NegotiationAction, AdjustmentCategory
+from app.models.negotiation import (
+    NegotiationLog,
+    NegotiationAction,
+    AdjustmentCategory,
+    DepartmentMessage,
+)
 from app.models.notification import NotificationType
 from app.schemas.audit import AuditLogListResponse, AuditLogResponse
 from app.schemas.optimization import (
     NegotiationRequest,
-    NegotiationResponse, DepartmentMessageCreateRequest, DepartmentMessageResponse,
+    NegotiationResponse,
+    DepartmentMessageCreateRequest,
+    DepartmentMessageResponse,
     OptimizationRejectRequest,
     OptimizationRunCreateRequest,
     OptimizationRunDetailResponse,
@@ -1023,7 +1030,7 @@ async def get_block_readiness(
 
 @router.post(
     "/blocks/{block_id}/negotiate",
-    response_model=NegotiationResponse, DepartmentMessageCreateRequest, DepartmentMessageResponse,
+    response_model=NegotiationResponse,
     status_code=status.HTTP_200_OK,
     summary="Submit a department negotiation action for an optimized block",
 )
