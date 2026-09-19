@@ -78,7 +78,7 @@ const mockNegotiationLogs = [
   },
 ];
 
-describe("Multi-Department Negotiation in OptimizedBlockDetailDrawer", () => {
+describe("Inter-Department Negotiation in OptimizedBlockDetailDrawer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
@@ -124,7 +124,7 @@ describe("Multi-Department Negotiation in OptimizedBlockDetailDrawer", () => {
       />
     );
 
-    expect(screen.getByText("Multi-Department Negotiation")).toBeInTheDocument();
+    expect(screen.getByText("Inter-Department Negotiation")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByText(/P-Way team accepts 4h window/i)).toBeInTheDocument();

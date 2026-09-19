@@ -482,17 +482,26 @@ export function OptimizedBlockDetailDrawer({
               </div>
 
               {readiness && (
-                <span
-                  className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold border ${
-                    readiness.readiness === "GO"
-                      ? "bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold border ${
+                      readiness.readiness === "GO"
+                        ? "bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
+                        : readiness.readiness === "HOLD"
+                        ? "bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800"
+                        : "bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800"
+                    }`}
+                  >
+                    {readiness.readiness}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {readiness.readiness === "GO"
+                      ? "All pre-conditions met — proceed to human approval"
                       : readiness.readiness === "HOLD"
-                      ? "bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800"
-                      : "bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800"
-                  }`}
-                >
-                  {readiness.readiness}
-                </span>
+                      ? "One or more checks pending — review before proceeding"
+                      : "Reduce scope or reschedule — constraints not satisfied"}
+                  </span>
+                </div>
               )}
             </div>
 
@@ -561,13 +570,13 @@ export function OptimizedBlockDetailDrawer({
             ) : null}
           </div>
 
-          {/* Multi-Department Negotiation (Badge 2) */}
+          {/* Inter-Department Negotiation (Badge 2) */}
           <div className="space-y-3 rounded-lg border border-border bg-card p-3.5 sm:p-4 shadow-2xs">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <SlidersHorizontal className="h-4 w-4 text-blue-600" />
                 <span className="text-xs font-bold text-foreground">
-                  Multi-Department Negotiation
+                  Inter-Department Negotiation
                 </span>
               </div>
 
@@ -577,7 +586,7 @@ export function OptimizedBlockDetailDrawer({
             </div>
 
             <p className="text-[11px] text-muted-foreground">
-              Participating departments (Engineering, S&T, TRD) review recommended possession parameters, register approvals, or propose structured adjustments.
+              Engineering, S&T and TRD can review, discuss and request adjustments to the AI-generated possession before human approval.
             </p>
 
             {/* Finalized Block Notice */}

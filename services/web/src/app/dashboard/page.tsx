@@ -16,6 +16,7 @@ import { IntegrationOpportunitiesSummary } from "@/components/dashboard/integrat
 import { CandidateBlocksSummary } from "@/components/dashboard/candidate-blocks-summary";
 import { LatestOptimizationRun } from "@/components/dashboard/latest-optimization-run";
 import { RecentOptimizedBlocks } from "@/components/dashboard/recent-optimized-blocks";
+import { DataSourcesPanel } from "@/components/dashboard/data-sources-panel";
 
 export default function DashboardPage() {
   const auth = useAuth();
@@ -141,7 +142,10 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* 5. Candidate Blocks Summary */}
+      {/* 5. Enterprise Data Sources & Prototype Adapters */}
+      <DataSourcesPanel />
+
+      {/* 6. Candidate Blocks Summary */}
       <CandidateBlocksSummary
         candidateBlocks={candidateBlocksQuery.data?.items}
         totalCandidates={candidateBlocksQuery.data?.total}

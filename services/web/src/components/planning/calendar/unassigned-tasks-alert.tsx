@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, ChevronDown, ChevronUp, ExternalLink, Wrench } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronUp, ExternalLink, GitBranch, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface UnassignedTasksAlertProps {
@@ -51,6 +51,15 @@ export function UnassignedTasksAlert({
               )}
             </Button>
           )}
+
+          <Link
+            href="/optimization"
+            className="inline-flex items-center gap-1 bg-blue-700 hover:bg-blue-800 text-white dark:bg-blue-600 dark:hover:bg-blue-700 px-2.5 py-1 rounded font-semibold transition-colors shadow-xs"
+          >
+            <GitBranch className="h-3 w-3" />
+            <span>Generate Counterfactual / Postpone Plan</span>
+            <ExternalLink className="h-3 w-3 ml-0.5" />
+          </Link>
 
           <Link
             href="/maintenance"

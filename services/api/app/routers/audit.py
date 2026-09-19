@@ -103,3 +103,70 @@ async def get_optimization_run_audit_trail(
         ],
         total=len(audit_logs),
     )
+
+
+@router.get(
+    "/logs",
+    response_model=AuditLogListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get global audit trail with pagination (RBAC: Authenticated Users)",
+    description="Retrieves the full immutable audit log with optional filtering by entity_type, action, and user_id. Supports pagination.",
+    responses={
+        200: {"description": "Paginated list of audit log entries"},
+        401: {"description": "Missing, invalid, or expired authentication token"},
+        403: {"description": "Insufficient role privileges"},
+    },
+)
+async def get_audit_logs(
+    page: int = 1,
+    page_size: int = 50,
+    entity_type: str | None = None,
+    action: str | None = None,
+    user_id: str | None = None,
+    current_user: User = Depends(require_roles(*AUDIT_READ_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> AuditLogListResponse:
+    """Retrieve global audit trail with optional filters and pagination."""
+    from sqlalchemy import func
+
+    conditions = []
+    if entity_type:
+        conditions.append(AuditLog.entity_type == entity_type)
+    if action:
+        conditions.append(AuditLog.action == action)
+    if user_id:
+        conditions.append(AuditLog.user_id == user_id)
+
+    count_stmt = select(func.count(AuditLog.id))
+    if conditions:
+        count_stmt = count_stmt.where(*conditions)
+    total = (await db.scalars(count_stmt)).one()
+
+    stmt = select(AuditLog)
+    if conditions:
+        stmt = stmt.where(*conditions)
+    stmt = (
+        stmt.order_by(AuditLog.timestamp.desc(), AuditLog.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    audit_logs = (await db.scalars(stmt)).all()
+
+    return AuditLogListResponse(
+        items=[
+            AuditLogResponse(
+                id=a.id,
+                timestamp=a.timestamp,
+                user_id=a.user_id,
+                action=a.action,
+                entity_type=a.entity_type,
+                entity_id=a.entity_id,
+                before_value=a.before_value,
+                after_value=a.after_value,
+                details=a.details,
+                ip_address=a.ip_address,
+            )
+            for a in audit_logs
+        ],
+        total=total,
+    )
