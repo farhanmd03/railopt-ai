@@ -85,20 +85,60 @@ describe("API Client", () => {
       process.env = { ...originalEnv };
       delete process.env.NEXT_PUBLIC_API_BASE_URL;
       delete process.env.NEXT_PUBLIC_API_URL;
+      delete process.env.INTERNAL_API_URL;
+      delete process.env.BACKEND_URL;
     });
 
     afterEach(() => {
       process.env = originalEnv;
     });
 
-    it("returns empty string in browser for same-origin proxy requests", () => {
+    it("always returns empty string in browser context, even when NEXT_PUBLIC_API_BASE_URL is set", () => {
+      process.env.NEXT_PUBLIC_API_BASE_URL = "https://custom-api.railopt.ai/";
       // In jsdom environment, window is defined
+      expect(typeof window).not.toBe("undefined");
       expect(getApiBaseUrl()).toBe("");
     });
 
-    it("returns explicit public environment variable when configured", () => {
-      process.env.NEXT_PUBLIC_API_BASE_URL = "https://custom-api.railopt.ai/";
-      expect(getApiBaseUrl()).toBe("https://custom-api.railopt.ai");
+    it("returns empty string in browser context when env is absent", () => {
+      expect(typeof window).not.toBe("undefined");
+      expect(getApiBaseUrl()).toBe("");
+    });
+
+    it("returns explicit public environment variable when in server-side context", () => {
+      const originalWindow = global.window;
+      try {
+        // @ts-expect-error - simulating server context
+        delete global.window;
+        process.env.NEXT_PUBLIC_API_BASE_URL = "https://custom-api.railopt.ai/";
+        expect(getApiBaseUrl()).toBe("https://custom-api.railopt.ai");
+      } finally {
+        global.window = originalWindow;
+      }
+    });
+
+    it("returns localhost:8000 in server-side development mode without public env", () => {
+      const originalWindow = global.window;
+      try {
+        // @ts-expect-error - simulating server context
+        delete global.window;
+        (process.env as Record<string, string | undefined>).NODE_ENV = "development";
+        expect(getApiBaseUrl()).toBe("http://localhost:8000");
+      } finally {
+        global.window = originalWindow;
+      }
+    });
+
+    it("returns production Render fallback in server-side production mode", () => {
+      const originalWindow = global.window;
+      try {
+        // @ts-expect-error - simulating server context
+        delete global.window;
+        (process.env as Record<string, string | undefined>).NODE_ENV = "production";
+        expect(getApiBaseUrl()).toBe("https://railopt-ai-36j3.onrender.com");
+      } finally {
+        global.window = originalWindow;
+      }
     });
   });
 });
