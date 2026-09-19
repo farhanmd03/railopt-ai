@@ -292,6 +292,7 @@ function CalendarPlanningPageContent() {
         <UnassignedTasksAlert
           unassignedCount={activeRun.tasks_unassigned}
           unassignedTaskIds={activeRun.unassigned_task_ids || []}
+          runId={activeRun.id}
         />
       )}
 

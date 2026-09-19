@@ -8,15 +8,21 @@ import { Button } from "@/components/ui/button";
 interface UnassignedTasksAlertProps {
   unassignedCount: number;
   unassignedTaskIds: string[];
+  runId?: string | number;
 }
 
 export function UnassignedTasksAlert({
   unassignedCount,
   unassignedTaskIds,
+  runId,
 }: UnassignedTasksAlertProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   if (unassignedCount <= 0) return null;
+
+  const counterfactualUrl = runId
+    ? `/optimization/runs/${runId}/what-if`
+    : "/optimization";
 
   return (
     <div className="bg-amber-50/70 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded p-3 text-xs shadow-xs space-y-2">
@@ -53,7 +59,7 @@ export function UnassignedTasksAlert({
           )}
 
           <Link
-            href="/optimization"
+            href={counterfactualUrl}
             className="inline-flex items-center gap-1 bg-blue-700 hover:bg-blue-800 text-white dark:bg-blue-600 dark:hover:bg-blue-700 px-2.5 py-1 rounded font-semibold transition-colors shadow-xs"
           >
             <GitBranch className="h-3 w-3" />
