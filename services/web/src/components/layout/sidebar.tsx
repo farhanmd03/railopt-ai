@@ -183,6 +183,15 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
             </span>
           </div>
 
+          <div className="px-2 py-1 rounded bg-slate-900/60 border border-slate-800/80 text-[10px] font-mono text-slate-400 flex items-center justify-between">
+            <span className="text-slate-500">Build:</span>
+            <span className="text-slate-300 font-bold">
+              {process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA
+                ? process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA.slice(0, 7)
+                : "abf127f"} (National Round)
+            </span>
+          </div>
+
           <button
             type="button"
             onClick={() => setShowLogoutDialog(true)}

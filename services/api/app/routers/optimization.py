@@ -40,7 +40,7 @@ from app.models.notification import NotificationType
 from app.schemas.audit import AuditLogListResponse, AuditLogResponse
 from app.schemas.optimization import (
     NegotiationRequest,
-    NegotiationResponse,
+    NegotiationResponse, DepartmentMessageCreateRequest, DepartmentMessageResponse,
     OptimizationRejectRequest,
     OptimizationRunCreateRequest,
     OptimizationRunDetailResponse,
@@ -1023,7 +1023,7 @@ async def get_block_readiness(
 
 @router.post(
     "/blocks/{block_id}/negotiate",
-    response_model=NegotiationResponse,
+    response_model=NegotiationResponse, DepartmentMessageCreateRequest, DepartmentMessageResponse,
     status_code=status.HTTP_200_OK,
     summary="Submit a department negotiation action for an optimized block",
 )
@@ -1144,3 +1144,107 @@ async def get_block_negotiations(
     logs = (await db.scalars(stmt)).all()
 
     return [NegotiationResponse.model_validate(log) for log in logs]
+
+# ---------------------------------------------------------------------------
+# Inter-Department Communication Channel Endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/blocks/{block_id}/messages",
+    response_model=DepartmentMessageResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Post a message in the inter-department communication channel",
+)
+async def post_block_message(
+    block_id: int,
+    payload: DepartmentMessageCreateRequest,
+    current_user: User = Depends(require_roles(*NEGOTIATOR_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> DepartmentMessageResponse:
+    """Post a collaborative message between Engineering, S&T, and TRD."""
+    block = await db.get(OptimizedBlock, block_id)
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Optimized block with ID '{block_id}' was not found.",
+        )
+
+    dept_normalized = payload.department.upper()
+    if not current_user.has_any_role(dept_normalized, "ADMIN"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User '{current_user.username}' is not authorized to post for department '{payload.department}'.",
+        )
+
+    now = datetime.now(timezone.utc)
+    msg_entry = DepartmentMessage(
+        optimized_block_id=block.id,
+        department=payload.department,
+        actor=current_user.username or current_user.id or "unknown",
+        message=payload.message.strip(),
+        message_type=payload.message_type or "CHAT",
+        timestamp=now,
+    )
+    db.add(msg_entry)
+    await db.flush()
+
+    audit_entry = AuditLog(
+        timestamp=now,
+        user_id=current_user.username or current_user.id or "unknown",
+        action="DEPARTMENT_MESSAGE",
+        entity_type="DepartmentMessage",
+        entity_id=str(msg_entry.id),
+        before_value=None,
+        after_value=json.dumps(
+            {
+                "optimized_block_id": block.id,
+                "department": payload.department,
+                "message": payload.message,
+                "message_type": payload.message_type,
+            }
+        ),
+        details=f"[{payload.department}] {payload.message[:100]}",
+    )
+    db.add(audit_entry)
+
+    await db.commit()
+    await db.refresh(msg_entry)
+
+    logger.info(
+        "Department message posted on block %s by %s (%s)",
+        block.id,
+        current_user.username,
+        payload.department,
+    )
+
+    return DepartmentMessageResponse.model_validate(msg_entry)
+
+
+@router.get(
+    "/blocks/{block_id}/messages",
+    response_model=list[DepartmentMessageResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Retrieve communication message history for an optimized block",
+)
+async def get_block_messages(
+    block_id: int,
+    current_user: User = Depends(require_roles(*OPTIMIZATION_READ_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> list[DepartmentMessageResponse]:
+    """Retrieve chronological discussion messages for a given block."""
+    block = await db.get(OptimizedBlock, block_id)
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Optimized block with ID '{block_id}' was not found.",
+        )
+
+    stmt = (
+        select(DepartmentMessage)
+        .where(DepartmentMessage.optimized_block_id == block.id)
+        .order_by(DepartmentMessage.timestamp.asc(), DepartmentMessage.id.asc())
+    )
+    messages = (await db.scalars(stmt)).all()
+
+    return [DepartmentMessageResponse.model_validate(m) for m in messages]

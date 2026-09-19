@@ -253,3 +253,37 @@ class OptimizationRunsListResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+class DepartmentMessageCreateRequest(BaseModel):
+    """Request payload to post a message in the department communication channel."""
+
+    department: str = Field(..., description="Department sending the message (ENGINEERING, SNT, TRD)")
+    message: str = Field(..., min_length=1, max_length=2000, description="Message text")
+    message_type: str | None = Field("CHAT", description="Type: CHAT, PROPOSAL, OBJECTION, CLARIFICATION")
+
+    @field_validator("department")
+    @classmethod
+    def validate_department(cls, v: str) -> str:
+        dept = v.strip().upper()
+        if dept in ("ENGINEERING", "ENGG"):
+            return "ENGINEERING"
+        if dept in ("SNT", "S&T", "S_AND_T", "SIGNAL"):
+            return "SNT"
+        if dept in ("TRD", "TRACTION"):
+            return "TRD"
+        return dept
+
+
+class DepartmentMessageResponse(BaseModel):
+    """Response schema for an inter-department communication message."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int = Field(..., description="Message ID")
+    optimized_block_id: int = Field(..., description="Optimized block ID")
+    department: str = Field(..., description="Department label")
+    actor: str = Field(..., description="Username / actor who posted the message")
+    message: str = Field(..., description="Message body")
+    message_type: str | None = Field("CHAT", description="Message category")
+    timestamp: datetime = Field(..., description="UTC timestamp of the message")

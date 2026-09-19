@@ -108,3 +108,19 @@ export interface NegotiationLog {
   performed_by: string;
   timestamp: string;
 }
+
+export interface DepartmentMessage {
+  id: number;
+  optimized_block_id: number;
+  department: string;
+  actor: string;
+  message: string;
+  message_type?: string | null;
+  timestamp: string;
+}
+
+export interface DepartmentMessageCreateRequest {
+  department: string;
+  message: string;
+  message_type?: string | null;
+}

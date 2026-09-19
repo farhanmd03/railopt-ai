@@ -65,3 +65,24 @@ class NegotiationLog(TimestampMixin, Base):
     optimized_block: Mapped["OptimizedBlock"] = relationship(
         "OptimizedBlock", back_populates="negotiations"
     )
+
+
+class DepartmentMessage(TimestampMixin, Base):
+    """Real-time inter-department communication message for an optimized block."""
+
+    __tablename__ = "department_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    optimized_block_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("optimized_blocks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    department: Mapped[str] = mapped_column(String(100), nullable=False)
+    actor: Mapped[str] = mapped_column(String(100), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    message_type: Mapped[str | None] = mapped_column(String(50), default="CHAT")
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )

@@ -132,3 +132,21 @@ export function getBlockNegotiations(
     `/api/v1/optimization/blocks/${encodeURIComponent(String(blockId))}/negotiations`
   );
 }
+
+export function getBlockMessages(
+  blockId: number
+): Promise<import("../types/optimization").DepartmentMessage[]> {
+  return apiGet<import("../types/optimization").DepartmentMessage[]>(
+    `/api/v1/optimization/blocks/${encodeURIComponent(String(blockId))}/messages`
+  );
+}
+
+export function sendBlockMessage(
+  blockId: number,
+  request: import("../types/optimization").DepartmentMessageCreateRequest
+): Promise<import("../types/optimization").DepartmentMessage> {
+  return apiPost<import("../types/optimization").DepartmentMessage>(
+    `/api/v1/optimization/blocks/${encodeURIComponent(String(blockId))}/messages`,
+    request
+  );
+}
