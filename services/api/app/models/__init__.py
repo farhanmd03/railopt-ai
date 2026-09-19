@@ -24,6 +24,8 @@ from app.models.optimization import (  # noqa: F401
     OptimizedBlockTask,
 )
 from app.models.admin import AuditLog, SystemSetting  # noqa: F401
+from app.models.notification import Notification, NotificationType  # noqa: F401
+from app.models.possession_outcome import PossessionOutcome, PossessionOutcomeStatus  # noqa: F401
 
 __all__ = [
     "Base",
@@ -56,4 +58,10 @@ __all__ = [
     # Admin
     "AuditLog",
     "SystemSetting",
+    # Notifications
+    "Notification",
+    "NotificationType",
+    # Possession Outcomes
+    "PossessionOutcome",
+    "PossessionOutcomeStatus",
 ]

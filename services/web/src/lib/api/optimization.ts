@@ -1,11 +1,24 @@
 import { apiGet, apiPost } from "../api-client";
 import { PaginatedResponse } from "../types/api";
 import {
+  AdjustmentCategory,
+  AdjustmentPayload,
+  NegotiationAction,
+  NegotiationLog,
+  NegotiationRequest,
   OptimizationRun,
   OptimizationRunCreateRequest,
   OptimizationRunDetail,
   OptimizedBlock,
 } from "../types/optimization";
+
+export type {
+  AdjustmentCategory,
+  AdjustmentPayload,
+  NegotiationAction,
+  NegotiationLog,
+  NegotiationRequest,
+};
 
 export interface ListOptimizationRunsParams {
   page?: number;
@@ -77,5 +90,45 @@ export function getOptimizationRunAuditTrail(
 ): Promise<AuditLogListResponse> {
   return apiGet<AuditLogListResponse>(
     `/api/v1/audit/optimization-runs/${encodeURIComponent(String(runId))}`
+  );
+}
+export interface ReadinessCheck {
+  key: string;
+  label: string;
+  status: "PASS" | "PENDING" | "FAIL";
+  message: string;
+}
+
+export interface PossessionReadiness {
+  block_id: number;
+  readiness: "GO" | "HOLD" | "REDUCE";
+  summary: string;
+  checks: ReadinessCheck[];
+  human_decision_required: boolean;
+}
+
+export function getBlockReadiness(
+  blockId: number
+): Promise<PossessionReadiness> {
+  return apiGet<PossessionReadiness>(
+    `/api/v1/optimization/blocks/${encodeURIComponent(String(blockId))}/readiness`
+  );
+}
+
+export function negotiateBlock(
+  blockId: number,
+  request: NegotiationRequest
+): Promise<NegotiationLog> {
+  return apiPost<NegotiationLog>(
+    `/api/v1/optimization/blocks/${encodeURIComponent(String(blockId))}/negotiate`,
+    request
+  );
+}
+
+export function getBlockNegotiations(
+  blockId: number
+): Promise<NegotiationLog[]> {
+  return apiGet<NegotiationLog[]>(
+    `/api/v1/optimization/blocks/${encodeURIComponent(String(blockId))}/negotiations`
   );
 }

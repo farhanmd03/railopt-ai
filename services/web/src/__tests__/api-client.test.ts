@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { apiClient, apiGet, apiPost, setAuthTokenGetter } from "@/lib/api-client";
+import { apiClient, apiGet, apiPost, getApiBaseUrl, setAuthTokenGetter } from "@/lib/api-client";
 
 describe("API Client", () => {
   const originalFetch = global.fetch;
@@ -76,5 +76,29 @@ describe("API Client", () => {
     const options = mockFetch.mock.calls[0][1];
     expect(options.method).toBe("POST");
     expect(options.body).toBe(JSON.stringify(payload));
+  });
+
+  describe("getApiBaseUrl", () => {
+    const originalEnv = process.env;
+
+    beforeEach(() => {
+      process.env = { ...originalEnv };
+      delete process.env.NEXT_PUBLIC_API_BASE_URL;
+      delete process.env.NEXT_PUBLIC_API_URL;
+    });
+
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it("returns empty string in browser for same-origin proxy requests", () => {
+      // In jsdom environment, window is defined
+      expect(getApiBaseUrl()).toBe("");
+    });
+
+    it("returns explicit public environment variable when configured", () => {
+      process.env.NEXT_PUBLIC_API_BASE_URL = "https://custom-api.railopt.ai/";
+      expect(getApiBaseUrl()).toBe("https://custom-api.railopt.ai");
+    });
   });
 });

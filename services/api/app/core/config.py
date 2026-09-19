@@ -95,13 +95,41 @@ class Settings(BaseSettings):
     keycloak_realm: str = "railopt"
     keycloak_client_id: str = "railopt-web"
 
+    # Default Auth0 Tenant Fallbacks (for seamless local testing against production tenant)
+    auth0_tenant_domain: str = "farhanmd03.us.auth0.com"
+    auth0_client_id: str = "ARUiG1mbMmmzOi6TK3t5wrFY8otx5prl"
+    auth0_audience: str = "https://railopt-ai-api"
+
+    @property
+    def auth0_issuer_url(self) -> str:
+        """Resolve standard Auth0 issuer URL."""
+        return f"https://{self.auth0_tenant_domain.strip('/')}/"
+
+    @property
+    def auth0_jwks_url(self) -> str:
+        """Resolve standard Auth0 JWKS URL."""
+        return f"https://{self.auth0_tenant_domain.strip('/')}/.well-known/jwks.json"
+
+    @property
+    def keycloak_issuer_url(self) -> str:
+        """Resolve standard Keycloak issuer URL."""
+        base = self.keycloak_url.rstrip("/")
+        return f"{base}/realms/{self.keycloak_realm}"
+
+    @property
+    def keycloak_jwks_url(self) -> str:
+        """Resolve standard Keycloak JWKS URL."""
+        base = self.keycloak_url.rstrip("/")
+        if "localhost" in base:
+            base = base.replace("localhost", "127.0.0.1")
+        return f"{base}/realms/{self.keycloak_realm}/protocol/openid-connect/certs"
+
     @property
     def effective_oidc_issuer(self) -> str:
         """Resolve effective OIDC issuer (prefers generic OIDC_ISSUER_URL)."""
         if self.oidc_issuer_url:
             return self.oidc_issuer_url.strip()
-        base = self.keycloak_url.rstrip("/")
-        return f"{base}/realms/{self.keycloak_realm}"
+        return self.keycloak_issuer_url
 
     @property
     def effective_oidc_client_id(self) -> str:
@@ -122,10 +150,7 @@ class Settings(BaseSettings):
             return self.oidc_jwks_url.strip()
         if self.oidc_issuer_url:
             return f"{self.oidc_issuer_url.rstrip('/')}/.well-known/jwks.json"
-        base = self.keycloak_url.rstrip("/")
-        if "localhost" in base:
-            base = base.replace("localhost", "127.0.0.1")
-        return f"{base}/realms/{self.keycloak_realm}/protocol/openid-connect/certs"
+        return self.keycloak_jwks_url
 
     # ── LLM Explainability Provider Architecture ────────────────
     llm_provider: str = "auto"  # "auto" | "ollama" | "gemini" | "deterministic"
