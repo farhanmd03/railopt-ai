@@ -331,6 +331,7 @@ export const ROLE_ROUTE_PERMISSIONS: Record<string, AppRole[]> = {
   "/planning": ["ADMIN", "PLANNER", "CONTROL"],
   "/optimization": ["ADMIN", "PLANNER", "CONTROL", "APPROVER"],
   "/operations": ["ADMIN", "PLANNER", "ENGINEERING", "SNT", "TRD", "CONTROL"],
+  "/communication": ["ADMIN", "PLANNER", "ENGINEERING", "SNT", "TRD", "CONTROL", "APPROVER"],
   "/map": ["ADMIN", "PLANNER", "ENGINEERING", "SNT", "TRD", "CONTROL", "APPROVER", "VIEWER"],
   "/approvals": ["ADMIN", "APPROVER"],
   "/audit": ["ADMIN", "VIEWER"],

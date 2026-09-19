@@ -64,4 +64,29 @@ describe("Sidebar Navigation", () => {
     const activeLink = screen.getByRole("link", { name: /dashboard/i });
     expect(activeLink).toHaveAttribute("aria-current", "page");
   });
+
+  it("renders Dashboard, Maintenance, Operations, Communication, and Map GIS for SNT role", () => {
+    vi.spyOn(reactOidcContext, "useAuth").mockReturnValue({
+      isAuthenticated: true,
+      user: {
+        profile: {
+          sub: "snt-123",
+          preferred_username: "snt.demo",
+          "https://railopt.ai/roles": ["SNT"],
+        },
+      },
+    } as unknown as reactOidcContext.AuthContextProps);
+
+    render(<Sidebar />);
+    expect(screen.getByRole("link", { name: /dashboard/i })).toHaveAttribute("href", "/dashboard");
+    expect(screen.getByRole("link", { name: /maintenance/i })).toHaveAttribute("href", "/maintenance");
+    expect(screen.getByRole("link", { name: /operations/i })).toHaveAttribute("href", "/operations");
+    expect(screen.getByRole("link", { name: /communication/i })).toHaveAttribute("href", "/communication");
+    expect(screen.getByRole("link", { name: /map gis/i })).toHaveAttribute("href", "/map");
+
+    // Planning / Optimization / Approvals should NOT be visible to SNT
+    expect(screen.queryByRole("link", { name: /^planning$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^optimization$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^approvals$/i })).not.toBeInTheDocument();
+  });
 });

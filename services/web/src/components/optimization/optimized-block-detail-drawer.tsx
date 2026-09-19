@@ -42,6 +42,7 @@ import { Button } from "@/components/ui/button";
 import { ExplainButton } from "@/components/explainability/explain-button";
 import { SourceBadge } from "@/components/optimization/source-badge";
 import { PossessionOutcomePanel } from "@/components/optimization/possession-outcome-panel";
+import { DepartmentCommunicationChannel } from "@/components/communication/department-communication-channel";
 
 
 interface OptimizedBlockDetailDrawerProps {
@@ -89,12 +90,6 @@ export function OptimizedBlockDetailDrawer({
   const [negotiations, setNegotiations] = useState<NegotiationLog[]>([]);
   const [isLoadingNegotiations, setIsLoadingNegotiations] = useState(false);
 
-  const [messages, setMessages] = useState<DepartmentMessage[]>([]);
-  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
-  const [chatMessage, setChatMessage] = useState("");
-  const [isSendingMessage, setIsSendingMessage] = useState(false);
-  const [chatDept, setChatDept] = useState<string>("ENGINEERING");
-
   const [readiness, setReadiness] = useState<optimizationApi.PossessionReadiness | null>(null);
   const [isLoadingReadiness, setIsLoadingReadiness] = useState(false);
   const [readinessError, setReadinessError] = useState(false);
@@ -112,44 +107,11 @@ export function OptimizedBlockDetailDrawer({
     }
   }, [block?.id]);
 
-  const fetchMessages = React.useCallback(async () => {
-    if (!block) return;
-    try {
-      setIsLoadingMessages(true);
-      const data = await optimizationApi.getBlockMessages(block.id);
-      setMessages(data || []);
-    } catch {
-      // Gracefully handle query error
-    } finally {
-      setIsLoadingMessages(false);
-    }
-  }, [block?.id]);
-
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!block || !chatMessage.trim() || isSendingMessage) return;
-    try {
-      setIsSendingMessage(true);
-      const dept = user?.roles.includes("ADMIN") ? chatDept : defaultDept;
-      const newMsg = await optimizationApi.sendBlockMessage(block.id, {
-        department: dept,
-        message: chatMessage.trim(),
-      });
-      setMessages((prev) => [...prev, newMsg]);
-      setChatMessage("");
-    } catch {
-      // Handled
-    } finally {
-      setIsSendingMessage(false);
-    }
-  };
-
   useEffect(() => {
     if (isOpen && block) {
       fetchNegotiations();
-      fetchMessages();
     }
-  }, [isOpen, block?.id, fetchNegotiations, fetchMessages]);
+  }, [isOpen, block?.id, fetchNegotiations]);
 
   useEffect(() => {
     if (!isOpen || !block) return;
@@ -616,129 +578,11 @@ export function OptimizedBlockDetailDrawer({
           {/* ═════════════════════════════════════════════════════════════════════ */}
           {/* INTER-DEPARTMENT COMMUNICATION CHANNEL                             */}
           {/* ═════════════════════════════════════════════════════════════════════ */}
-          <div className="space-y-3 rounded-lg border border-border bg-card p-3.5 sm:p-4 shadow-2xs">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <MessageSquare className="h-4 w-4 text-blue-600" />
-                <span className="text-xs font-bold text-foreground">
-                  Inter-Department Communication Channel
-                </span>
-              </div>
-              <span className="text-[10px] uppercase font-semibold text-muted-foreground bg-muted px-2 py-0.5 rounded">
-                Live Discussion
-              </span>
-            </div>
-
-            <p className="text-[11px] text-muted-foreground">
-              Shared operational discussion between Engineering, S&T and TRD.
-            </p>
-
-            {/* Message Stream */}
-            <div className="space-y-2 max-h-60 overflow-y-auto pr-1 bg-muted/20 p-2.5 rounded border border-border/60">
-              {isLoadingMessages ? (
-                <div className="p-3 text-[11px] text-muted-foreground text-center">
-                  Loading discussion messages...
-                </div>
-              ) : messages.length > 0 ? (
-                messages.map((m) => (
-                  <div
-                    key={m.id}
-                    className="p-2.5 rounded bg-background border border-border text-xs space-y-1 shadow-2xs"
-                  >
-                    <div className="flex items-center justify-between gap-1 flex-wrap">
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className={`px-1.5 py-0.2 rounded text-[10px] font-bold border ${
-                            m.department.toUpperCase() === "ENGINEERING"
-                              ? "bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300"
-                              : m.department.toUpperCase() === "SNT" || m.department.toUpperCase() === "S&T"
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300"
-                              : "bg-purple-50 text-purple-700 border-purple-300 dark:bg-purple-950/60 dark:text-purple-300"
-                          }`}
-                        >
-                          {m.department}
-                        </span>
-                        <span className="text-[11px] font-semibold text-foreground">
-                          {m.actor}
-                        </span>
-                      </div>
-                      <span className="text-[10px] font-mono text-muted-foreground">
-                        {formatDateTime(m.timestamp)}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-foreground pl-0.5">{m.message}</p>
-                  </div>
-                ))
-              ) : (
-                <div className="p-4 text-center text-[11px] text-muted-foreground">
-                  No department messages yet. Start a discussion below.
-                </div>
-              )}
-            </div>
-
-            {/* Quick Chips */}
-            <div className="flex items-center gap-1.5 flex-wrap pt-1">
-              <span className="text-[10px] text-muted-foreground font-semibold">Quick Chips:</span>
-              {[
-                "Track access requires +30m preparation",
-                "Signalling circuits ready for window",
-                "OHE power isolation confirmed on siding",
-                "Accepting recommended schedule",
-              ].map((chip) => (
-                <button
-                  key={chip}
-                  type="button"
-                  onClick={() => setChatMessage(chip)}
-                  className="text-[10px] px-2 py-0.5 rounded-full bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground border border-border/80 transition-colors"
-                >
-                  {chip}
-                </button>
-              ))}
-            </div>
-
-            {/* Message Composer */}
-            {isNegotiator ? (
-              <form onSubmit={handleSendMessage} className="space-y-2 pt-2 border-t border-border">
-                <div className="flex items-center gap-2">
-                  {user?.roles.includes("ADMIN") ? (
-                    <select
-                      value={chatDept}
-                      onChange={(e) => setChatDept(e.target.value)}
-                      className="rounded border border-border bg-background px-2 py-1 text-xs font-semibold text-foreground shrink-0"
-                    >
-                      <option value="ENGINEERING">Engineering</option>
-                      <option value="SNT">S&T</option>
-                      <option value="TRD">TRD</option>
-                    </select>
-                  ) : (
-                    <span className="rounded bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-bold px-2 py-1 text-[11px] border border-blue-200 dark:border-blue-800 shrink-0">
-                      {selectedDept}
-                    </span>
-                  )}
-                  <input
-                    type="text"
-                    value={chatMessage}
-                    onChange={(e) => setChatMessage(e.target.value)}
-                    placeholder="Type operational discussion message..."
-                    className="flex-1 rounded border border-border bg-background px-2.5 py-1 text-xs text-foreground placeholder:text-muted-foreground"
-                  />
-                  <Button
-                    type="submit"
-                    size="sm"
-                    disabled={isSendingMessage || !chatMessage.trim()}
-                    className="h-7 text-xs px-2.5 gap-1 shrink-0"
-                  >
-                    <SendHorizonal className="h-3 w-3" />
-                    <span>Send</span>
-                  </Button>
-                </div>
-              </form>
-            ) : (
-              <div className="text-[11px] text-muted-foreground italic">
-                Sign in with an Engineering, S&T, or TRD role to participate in the discussion.
-              </div>
-            )}
-          </div>
+          <DepartmentCommunicationChannel
+            blockId={block.id}
+            departments={block.departments_involved}
+            compact={true}
+          />
 
           {/* Inter-Department Negotiation (Badge 2) */}
           <div className="space-y-3 rounded-lg border border-border bg-card p-3.5 sm:p-4 shadow-2xs">

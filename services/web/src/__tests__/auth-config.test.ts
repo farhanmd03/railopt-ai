@@ -193,9 +193,19 @@ describe("Auth Configuration & Role Mapping", () => {
       expect(isRouteAllowedForRoles("/approvals", ["ENGINEERING"])).toBe(false);
     });
 
+    it("allows SNT, ENGINEERING, and TRD access to /communication", () => {
+      expect(isRouteAllowedForRoles("/communication", ["SNT"])).toBe(true);
+      expect(isRouteAllowedForRoles("/communication", ["ENGINEERING"])).toBe(true);
+      expect(isRouteAllowedForRoles("/communication", ["TRD"])).toBe(true);
+      expect(isRouteAllowedForRoles("/communication", ["PLANNER"])).toBe(true);
+      expect(isRouteAllowedForRoles("/communication", ["ADMIN"])).toBe(true);
+      expect(isRouteAllowedForRoles("/communication", ["VIEWER"])).toBe(false);
+    });
+
     it("safely handles empty roles", () => {
       expect(isRouteAllowedForRoles("/dashboard", [])).toBe(false);
       expect(isRouteAllowedForRoles("/planning", [])).toBe(false);
+      expect(isRouteAllowedForRoles("/communication", [])).toBe(false);
     });
   });
 

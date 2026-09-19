@@ -14,6 +14,7 @@ import {
   FileText,
   LogOut,
   SlidersHorizontal,
+  MessageSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "react-oidc-context";
@@ -51,6 +52,7 @@ export const NAV_GROUPS: NavGroup[] = [
     title: "OPERATIONS",
     items: [
       { label: "Operations", href: "/operations", icon: Activity },
+      { label: "Communication", href: "/communication", icon: MessageSquare, badge: "Live" },
       { label: "Map GIS", href: "/map", icon: MapPin },
     ],
   },
@@ -188,7 +190,7 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
             <span className="text-slate-300 font-bold">
               {process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA
                 ? process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA.slice(0, 7)
-                : "abf127f"} (National Round)
+                : "LOCAL/UNKNOWN"} (National Round)
             </span>
           </div>
 
