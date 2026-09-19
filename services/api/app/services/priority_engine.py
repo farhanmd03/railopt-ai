@@ -194,12 +194,19 @@ def compute_priority(
     criticality_index: float | None = None,
     failure_risk_score: float | None = None,
     baseline_priority_score: float | None = None,
+    ml_risk_score: float | None = None,
 ) -> PriorityCalculationResult:
-    """Pure calculation function for maintenance priority scoring."""
+    """Pure calculation function for maintenance priority scoring, incorporating XGBoost ML risk when available."""
     sev_comp = calculate_severity_component(severity)
     overdue_comp = calculate_overdue_component(days_overdue)
     crit_comp = calculate_criticality_component(criticality_index)
-    risk_comp = calculate_failure_risk_component(failure_risk_score)
+
+    # When ML risk score is provided from MlRiskPredictor, integrate it with the asset failure probability
+    raw_risk_comp = calculate_failure_risk_component(failure_risk_score)
+    if ml_risk_score is not None:
+        risk_comp = round(0.5 * raw_risk_comp + 0.5 * ml_risk_score, 2)
+    else:
+        risk_comp = raw_risk_comp
 
     raw_score = (
         (WEIGHT_SEVERITY * sev_comp)
@@ -221,6 +228,8 @@ def compute_priority(
         crit_comp=crit_comp,
         risk_comp=risk_comp,
     )
+    if ml_risk_score is not None and ml_risk_score >= 60.0:
+        reasons.append(f"XGBoost ML risk model predicted elevated risk ({ml_risk_score:.1f}/100)")
 
     return PriorityCalculationResult(
         task_id=task_id,
@@ -237,6 +246,7 @@ def compute_priority(
             failure_risk_component=round(risk_comp, 2),
         ),
         reasons=reasons,
+        ml_risk_score=ml_risk_score,
     )
 
 
@@ -260,6 +270,20 @@ class PriorityEngine:
 
         criticality_index = task.asset.criticality_index if task.asset else None
         failure_risk_score = task.asset.failure_risk_score if task.asset else None
+        dur = float(task.required_duration_hrs) if task.required_duration_hrs is not None else 2.0
+        cost = float(task.postpone_penalty_cost) if task.postpone_penalty_cost is not None else None
+
+        from app.services.ml_risk_predictor import MlRiskPredictor
+        ml_pred = MlRiskPredictor.predict_risk(
+            task_id=task.task_id,
+            severity=task.severity,
+            days_overdue=task.days_overdue,
+            required_duration_hrs=dur,
+            postpone_penalty_cost=cost,
+            department=task.department,
+            criticality_index=criticality_index,
+            failure_risk_score=failure_risk_score,
+        )
 
         return compute_priority(
             task_id=task.task_id,
@@ -271,4 +295,5 @@ class PriorityEngine:
             criticality_index=criticality_index,
             failure_risk_score=failure_risk_score,
             baseline_priority_score=task.priority_score,
+            ml_risk_score=ml_pred.risk_score,
         )

@@ -109,6 +109,22 @@ class OptimizationService:
         for t in db_tasks:
             crit = t.asset.criticality_index if t.asset else None
             risk = t.asset.failure_risk_score if t.asset else None
+            dur = float(t.required_duration_hrs) if t.required_duration_hrs is not None else 2.0
+            cost = float(t.postpone_penalty_cost) if t.postpone_penalty_cost is not None else None
+
+            # Execute real XGBoost ML Risk Prediction for task
+            from app.services.ml_risk_predictor import MlRiskPredictor
+            ml_pred = MlRiskPredictor.predict_risk(
+                task_id=t.task_id,
+                severity=t.severity,
+                days_overdue=t.days_overdue,
+                required_duration_hrs=dur,
+                postpone_penalty_cost=cost,
+                department=t.department,
+                criticality_index=crit,
+                failure_risk_score=risk,
+            )
+
             p_res = compute_priority(
                 task_id=t.task_id,
                 department=t.department,
@@ -119,9 +135,9 @@ class OptimizationService:
                 criticality_index=crit,
                 failure_risk_score=risk,
                 baseline_priority_score=t.priority_score,
+                ml_risk_score=ml_pred.risk_score,
             )
             # Duration on OptimizationTask is informative; candidate blocks carry required_duration_hrs
-            dur = float(t.required_duration_hrs) if t.required_duration_hrs is not None else 2.0
             domain_tasks.append(
                 OptimizationTask(
                     task_id=t.task_id,

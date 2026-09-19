@@ -32,3 +32,4 @@ class PriorityCalculationResult:
     priority_band: str  # CRITICAL | HIGH | MEDIUM | LOW
     components: PriorityComponents
     reasons: list[str] = field(default_factory=list)
+    ml_risk_score: float | None = None
