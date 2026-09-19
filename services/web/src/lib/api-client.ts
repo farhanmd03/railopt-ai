@@ -8,10 +8,33 @@
 
 import { ApiError } from "./types/api";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/v1\/?$/, "")?.replace(/\/+$/, "") ||
-  "http://localhost:8000";
+export function getApiBaseUrl(): string {
+  const publicEnv =
+    process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
+    process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/v1\/?$/, "")?.replace(/\/+$/, "");
+
+  if (publicEnv) {
+    return publicEnv;
+  }
+
+  // Browser execution (production or dev proxy): use same-origin relative URL
+  if (typeof window !== "undefined") {
+    return "";
+  }
+
+  // Server-side Node development
+  if (process.env.NODE_ENV === "development") {
+    return "http://localhost:8000";
+  }
+
+  // Server-side SSR production fallback
+  return (
+    process.env.INTERNAL_API_URL ||
+    process.env.BACKEND_URL ||
+    "https://railopt-ai-36j3.onrender.com"
+  ).replace(/\/+$/, "");
+}
+
 
 let authTokenGetter: (() => string | null) | null = null;
 
@@ -28,8 +51,8 @@ export async function apiClient<T>(
   options: RequestOptions = {}
 ): Promise<T> {
   const { params, headers: customHeaders, ...restOptions } = options;
-
-  let url = `${API_BASE_URL}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
+  const baseUrl = getApiBaseUrl();
+  let url = `${baseUrl}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
 
   if (params) {
     const searchParams = new URLSearchParams();
