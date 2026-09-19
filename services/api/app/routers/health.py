@@ -4,6 +4,7 @@ GET /health     — basic service liveness (no DB dependency)
 GET /health/db  — database connectivity + PostGIS verification
 """
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends
@@ -30,13 +31,14 @@ async def db_health_check(
 ) -> DatabaseHealthResponse:
     """Database connectivity and PostGIS extension health check."""
     try:
-        # Basic connectivity
-        result = await db.execute(text("SELECT 1"))
-        result.scalar_one()
+        async def _check_db():
+            result = await db.execute(text("SELECT 1"))
+            result.scalar_one()
 
-        # PostGIS extension check
-        postgis_result = await db.execute(text("SELECT PostGIS_Version()"))
-        postgis_version = postgis_result.scalar_one_or_none()
+            postgis_result = await db.execute(text("SELECT PostGIS_Version()"))
+            return postgis_result.scalar_one_or_none()
+
+        postgis_version = await asyncio.wait_for(_check_db(), timeout=3.5)
 
         return DatabaseHealthResponse(
             status="ok",
@@ -45,7 +47,7 @@ async def db_health_check(
             postgis=postgis_version,
         )
     except Exception as exc:
-        logger.error("Database health check failed: %s", exc, exc_info=True)
+        logger.warning("Database health check returned unreachable: %s", exc)
         return DatabaseHealthResponse(
             status="error",
             service="railopt-api",

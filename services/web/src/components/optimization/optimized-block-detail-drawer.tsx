@@ -36,6 +36,9 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ExplainButton } from "@/components/explainability/explain-button";
+import { SourceBadge } from "@/components/optimization/source-badge";
+import { PossessionOutcomePanel } from "@/components/optimization/possession-outcome-panel";
+
 
 interface OptimizedBlockDetailDrawerProps {
   block: OptimizedBlock | null;
@@ -403,6 +406,7 @@ export function OptimizedBlockDetailDrawer({
                 >
                   <Wrench className="h-3.5 w-3.5" />
                   <span>{d}</span>
+                  <SourceBadge department={d} />
                 </div>
               ))}
             </div>
@@ -856,6 +860,9 @@ export function OptimizedBlockDetailDrawer({
               )}
             </div>
           </div>
+
+          {/* Possession Outcome Ledger (Badge 4) */}
+          <PossessionOutcomePanel block={block} isAuthorized={isNegotiator} />
 
           {/* Mandatory Decision Support Notice */}
           <div className="p-3 rounded border border-amber-200 dark:border-amber-900 bg-amber-50/50 dark:bg-amber-950/30 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2">

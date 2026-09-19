@@ -14,12 +14,14 @@ export function getNotifications(
   );
 }
 
-export async function markNotificationRead(id: number): Promise<Notification> {
-  const response = await apiClient.patch(`/api/v1/notifications/${id}/read`);
-  return response.data;
+export function markNotificationRead(id: number): Promise<Notification> {
+  return apiClient<Notification>(`/api/v1/notifications/${id}/read`, {
+    method: "PATCH",
+  });
 }
 
-export async function markAllNotificationsRead(): Promise<{ message: string }> {
-  const response = await apiClient.patch("/api/v1/notifications/read-all");
-  return response.data;
+export function markAllNotificationsRead(): Promise<{ message: string }> {
+  return apiClient<{ message: string }>("/api/v1/notifications/read-all", {
+    method: "PATCH",
+  });
 }
