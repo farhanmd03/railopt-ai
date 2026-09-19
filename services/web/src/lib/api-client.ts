@@ -9,17 +9,19 @@
 import { ApiError } from "./types/api";
 
 export function getApiBaseUrl(): string {
+  // Browser execution (production or dev proxy): always use same-origin relative URL
+  // so browser requests are transparently rewritten by Next.js proxy to the Render backend.
+  if (typeof window !== "undefined") {
+    return "";
+  }
+
+  // Server-side execution (SSR, Node tests, pre-rendering):
   const publicEnv =
     process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ||
     process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/v1\/?$/, "")?.replace(/\/+$/, "");
 
   if (publicEnv) {
     return publicEnv;
-  }
-
-  // Browser execution (production or dev proxy): use same-origin relative URL
-  if (typeof window !== "undefined") {
-    return "";
   }
 
   // Server-side Node development
@@ -34,6 +36,7 @@ export function getApiBaseUrl(): string {
     "https://railopt-ai-36j3.onrender.com"
   ).replace(/\/+$/, "");
 }
+
 
 
 let authTokenGetter: (() => string | null) | null = null;
