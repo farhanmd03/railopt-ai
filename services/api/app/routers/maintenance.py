@@ -11,13 +11,16 @@ from app.schemas.compatibility import (
     IntegrationOpportunityResponse,
 )
 from app.schemas.maintenance import (
+    MaintenanceTaskAiRiskResponse,
     MaintenanceTaskDetailResponse,
     MaintenanceTaskResponse,
     PriorityAssessmentResponse,
     PriorityComponents,
+    RiskContributingFactor,
 )
 from app.services.compatibility_engine import CompatibilityEngine
 from app.services.maintenance_service import MaintenanceService
+from app.services.ml_risk_predictor import MlRiskPredictor
 from app.services.priority_engine import PriorityEngine
 
 router = APIRouter(prefix="/maintenance-tasks", tags=["Maintenance Tasks"])
@@ -230,3 +233,49 @@ async def get_task_integration_opportunities(
             detail=f"Maintenance task with ID '{task_id}' not found",
         )
     return opps
+
+
+@router.get(
+    "/{task_id}/ai-risk",
+    response_model=MaintenanceTaskAiRiskResponse,
+    summary="Get ML Maintenance Risk Prediction (RBAC Protected)",
+    description=(
+        "Retrieve prototype XGBoost machine learning failure and postponement risk prediction for a specific task. "
+        "Explicitly labeled as a Prototype ML Prediction to support human decision-making. "
+        "Requires authentication and one of: ADMIN, PLANNER, ENGINEERING, SNT, TRD, CONTROL, APPROVER, VIEWER."
+    ),
+    responses={
+        401: {"description": "Missing, invalid, or expired authentication token"},
+        403: {"description": "Insufficient role privileges"},
+        404: {"description": "Maintenance task not found"},
+    },
+)
+async def get_maintenance_task_ai_risk(
+    task_id: str,
+    current_user: User = Depends(require_roles(*MAINTENANCE_READ_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> MaintenanceTaskAiRiskResponse:
+    """Get prototype XGBoost risk prediction and contributing factors for a maintenance task."""
+    pred = await MlRiskPredictor.evaluate_task_ml_risk(db=db, task_id=task_id)
+    if not pred:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Maintenance task with ID '{task_id}' not found",
+        )
+    return MaintenanceTaskAiRiskResponse(
+        task_id=pred.task_id,
+        risk_score=pred.risk_score,
+        risk_band=pred.risk_band,
+        model=pred.model_name,
+        is_prototype=pred.is_prototype,
+        prototype_disclaimer=pred.prototype_disclaimer,
+        top_factors=[
+            RiskContributingFactor(
+                factor=f.factor,
+                impact=f.impact,
+                description=f.description,
+            )
+            for f in pred.top_factors
+        ],
+        feature_summary=pred.feature_summary,
+    )

@@ -2,7 +2,7 @@
 
 import React, { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getTaskPriority, getTaskIntegrationOpportunities } from "@/lib/api/maintenance";
+import { getTaskPriority, getTaskIntegrationOpportunities, getTaskAiRisk } from "@/lib/api/maintenance";
 import { MaintenanceTask } from "@/lib/types/maintenance";
 import { SeverityBadge } from "@/components/status/severity-badge";
 import { LoadingState } from "@/components/feedback/loading-state";
@@ -16,6 +16,8 @@ import {
   ExternalLink,
   Flame,
   Layers,
+  Brain,
+  Cpu,
   MapPin,
   Shield,
   Sparkles,
@@ -53,7 +55,14 @@ export function TaskDetailDrawer({ task, isOpen, onClose }: TaskDetailDrawerProp
     enabled: isOpen && !!taskId,
   });
 
-  // 2. Fetch potential integration opportunities for this task on demand
+  // 2. Fetch ML risk prediction on demand (XGBoost Prototype)
+  const aiRiskQuery = useQuery({
+    queryKey: ["task-ai-risk", taskId],
+    queryFn: () => getTaskAiRisk(taskId!),
+    enabled: isOpen && !!taskId,
+  });
+
+  // 3. Fetch potential integration opportunities for this task on demand
   const opportunitiesQuery = useQuery({
     queryKey: ["task-integration-opportunities", taskId],
     queryFn: () => getTaskIntegrationOpportunities(taskId!),
@@ -63,6 +72,7 @@ export function TaskDetailDrawer({ task, isOpen, onClose }: TaskDetailDrawerProp
   if (!isOpen || !task) return null;
 
   const priorityData = priorityQuery.data;
+  const aiRiskData = aiRiskQuery.data;
   const opportunities = opportunitiesQuery.data || [];
   const isOverdue = (task.days_overdue || 0) > 0;
 
@@ -276,6 +286,92 @@ export function TaskDetailDrawer({ task, isOpen, onClose }: TaskDetailDrawerProp
                 </div>
               </div>
             )}
+          </div>
+
+          {/* ═════════════════════════════════════════════════════════════════════ */}
+          {/* SECTION: AI/ML RISK PREDICTION (PROTOTYPE XGBOOST)                  */}
+          {/* ═════════════════════════════════════════════════════════════════════ */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between border-b border-border pb-2">
+              <div className="flex items-center gap-1.5">
+                <Brain className="h-4 w-4 text-purple-600" />
+                <h3 className="text-sm font-bold text-foreground">AI/ML Risk Prediction</h3>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                Prototype ML Model
+              </span>
+            </div>
+
+            {aiRiskQuery.isLoading ? (
+              <LoadingState message="Running XGBoost ML risk inference..." rows={2} />
+            ) : aiRiskData ? (
+              <div className="space-y-3">
+                <div className="p-3.5 rounded border border-purple-200 dark:border-purple-900 bg-purple-50/40 dark:bg-purple-950/20 shadow-2xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-bold text-purple-700 dark:text-purple-300 uppercase tracking-wider block">
+                        Predicted Maintenance Risk Score
+                      </span>
+                      <div className="flex items-baseline gap-2 mt-0.5">
+                        <span className="text-2xl font-extrabold text-purple-900 dark:text-purple-100 font-mono">
+                          {aiRiskData.risk_score.toFixed(1)} / 100
+                        </span>
+                        <span
+                          className={`rounded px-1.5 py-0.2 text-[10px] font-extrabold border ${
+                            aiRiskData.risk_band === "CRITICAL"
+                              ? "bg-red-100 text-red-800 border-red-300"
+                              : aiRiskData.risk_band === "HIGH"
+                              ? "bg-amber-100 text-amber-800 border-amber-300"
+                              : aiRiskData.risk_band === "MEDIUM"
+                              ? "bg-blue-100 text-blue-800 border-blue-300"
+                              : "bg-emerald-100 text-emerald-800 border-emerald-300"
+                          }`}
+                        >
+                          {aiRiskData.risk_band}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="text-right">
+                      <span className="text-[10px] font-mono text-muted-foreground block">
+                        {aiRiskData.model_name}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        Nonlinear interaction model
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Top Factors */}
+                  {aiRiskData.top_factors && aiRiskData.top_factors.length > 0 && (
+                    <div className="space-y-1 pt-2 border-t border-purple-200/60 dark:border-purple-800/60">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
+                        Top Contributing Risk Factors
+                      </span>
+                      <div className="space-y-1">
+                        {aiRiskData.top_factors.map((factor, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center justify-between text-xs bg-background/60 p-1.5 rounded border border-border/60"
+                          >
+                            <span className="text-foreground font-medium text-[11px]">
+                              {factor.description}
+                            </span>
+                            <span className="font-mono text-[10px] text-muted-foreground">
+                              weight {factor.importance.toFixed(2)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="text-[10px] text-muted-foreground italic pt-1 border-t border-purple-200/40">
+                    {aiRiskData.prototype_disclaimer}
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           {/* ═════════════════════════════════════════════════════════════════════ */}

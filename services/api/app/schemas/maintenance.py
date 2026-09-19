@@ -57,3 +57,26 @@ class PriorityAssessmentResponse(BaseModel):
     reasons: list[str]
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class RiskContributingFactor(BaseModel):
+    """Individual contributing factor for ML risk assessment."""
+
+    factor: str
+    impact: str  # HIGH | MEDIUM | LOW
+    description: str
+
+
+class MaintenanceTaskAiRiskResponse(BaseModel):
+    """XGBoost prototype ML risk prediction response."""
+
+    task_id: str
+    risk_score: float
+    risk_band: str  # CRITICAL | HIGH | MEDIUM | LOW
+    model: str
+    is_prototype: bool = True
+    prototype_disclaimer: str
+    top_factors: list[RiskContributingFactor]
+    feature_summary: dict[str, float | str | int | None]
+
+    model_config = ConfigDict(from_attributes=True)

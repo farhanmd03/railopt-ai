@@ -58,3 +58,27 @@ export function getTaskIntegrationOpportunities(
   );
 }
 
+export interface RiskContributingFactor {
+  feature: string;
+  value: number;
+  importance: number;
+  description: string;
+}
+
+export interface MaintenanceTaskAiRisk {
+  task_id: string;
+  risk_score: number;
+  risk_band: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+  model_name: string;
+  is_prototype: boolean;
+  prototype_disclaimer: string;
+  top_factors: RiskContributingFactor[];
+  feature_summary: Record<string, number>;
+}
+
+export function getTaskAiRisk(taskId: string): Promise<MaintenanceTaskAiRisk> {
+  return apiGet<MaintenanceTaskAiRisk>(
+    `/api/v1/maintenance-tasks/${encodeURIComponent(taskId)}/ai-risk`
+  );
+}
+
